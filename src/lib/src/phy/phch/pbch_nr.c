@@ -613,7 +613,7 @@ int srsran_pbch_nr_encode(srsran_pbch_nr_t*           q,
   return SRSRAN_SUCCESS;
 }
 
-void (*srsran_pbch_nr_const_cb)(const cf_t* symbols, uint32_t nof_symbols, bool crc_ok) = NULL;
+void (*srsran_pbch_nr_const_cb)(const cf_t* symbols, uint32_t nof_symbols, bool crc_ok, const uint32_t* mib_fields) = NULL;
 
 int srsran_pbch_nr_decode(srsran_pbch_nr_t*           q,
                           const srsran_pbch_nr_cfg_t* cfg,
@@ -675,9 +675,6 @@ int srsran_pbch_nr_decode(srsran_pbch_nr_t*           q,
 
   // 7.1.3 Transport block CRC attachment
   msg->crc = srsran_crc_match(&q->crc, b, PBCH_NR_A);
-  if (srsran_pbch_nr_const_cb != NULL) {
-    srsran_pbch_nr_const_cb(symbols, PBCH_NR_M, msg->crc);
-  }
   PBCH_NR_DEBUG_RX("crc=%s", msg->crc ? "OK" : "KO");
 
   // 7.1.2 Scrambling
@@ -686,6 +683,27 @@ int srsran_pbch_nr_decode(srsran_pbch_nr_t*           q,
 
   // 7.1.1  PBCH payload generation
   pbch_nr_pbch_msg_unpack(cfg, a, msg);
+
+  // nrscope tap: equalised symbols plus the decoded MIB fields
+  if (srsran_pbch_nr_const_cb != NULL) {
+    srsran_mib_nr_t mib;
+    uint32_t        mf[10];
+    bool            has_mib = false;
+    if (msg->crc && srsran_pbch_msg_nr_mib_unpack(msg, &mib) == SRSRAN_SUCCESS) {
+      mf[0]   = mib.sfn;
+      mf[1]   = mib.ssb_idx;
+      mf[2]   = mib.hrf ? 1 : 0;
+      mf[3]   = (uint32_t)mib.scs_common;
+      mf[4]   = mib.ssb_offset;
+      mf[5]   = (mib.dmrs_typeA_pos == srsran_dmrs_sch_typeA_pos_3) ? 3 : 2;
+      mf[6]   = mib.coreset0_idx;
+      mf[7]   = mib.ss0_idx;
+      mf[8]   = mib.cell_barred ? 1 : 0;
+      mf[9]   = mib.intra_freq_reselection ? 1 : 0;
+      has_mib = true;
+    }
+    srsran_pbch_nr_const_cb(symbols, PBCH_NR_M, msg->crc, has_mib ? mf : NULL);
+  }
 
   return SRSRAN_SUCCESS;
 }

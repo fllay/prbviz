@@ -108,6 +108,7 @@ SRSRAN_API int srsran_pbch_nr_decode(srsran_pbch_nr_t*           q,
 /**
  * Optional tap (nrscope): called with the equalised PBCH symbols (QPSK points) after every PBCH decode attempt
  */
-SRSRAN_API extern void (*srsran_pbch_nr_const_cb)(const cf_t* symbols, uint32_t nof_symbols, bool crc_ok);
+/// mib_fields is NULL unless the CRC matched, then: sfn, ssb_idx, hrf, scs_common (enum), k_ssb, dmrs_typeA_pos (2/3), coreset0_idx, ss0_idx, cell_barred, intra_freq_reselection
+SRSRAN_API extern void (*srsran_pbch_nr_const_cb)(const cf_t* symbols, uint32_t nof_symbols, bool crc_ok, const uint32_t* mib_fields);
 
 #endif // SRSRAN_PBCH_NR_H

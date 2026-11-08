@@ -53,6 +53,12 @@ Current testbed: gNB PCI 1, SSB at 3483.84 MHz (ARFCN 632256, GSCN 7835), 30 kHz
   visible. Use windows of 4 to 40 slots (4 slots = 2 ms). The SSB box follows the symbols that are actually loud in the SSB
   PRBs, because the SSB symbol position moves between runs (see the timing note below). The CORESET0 box uses
   `coreset0.sym_start` / `nsym` from the meta file, which are nominal and not yet verified on the testbed.
+* **PSS / SSS / PBCH (MIB) overlay** (checkbox "PSS/SSS/PBCH", per-symbol view only). Inside each SSB box the 4 SSB symbols are split into
+  PSS (symbol 0, centre 127 subcarriers), PBCH (symbols 1 and 3 over all 20 PRBs, symbol 2 over the outer 4 PRBs on each side) and SSS
+  (symbol 2, centre 127 subcarriers). The MIB is carried by the PBCH. Use a 4-slot window so the symbols are wide enough to read; the
+  sub-boxes are drawn from the nominal SSB layout (they ignore `k_SSB`, so edges can be off by a few subcarriers).
+* **MIB fields.** Under the PBCH constellation the viewer prints the decoded MIB: SFN, SSB index, common SCS, `k_SSB`, DM-RS type-A position,
+  CORESET0 and SearchSpace0 indices, cell-barred and intra-frequency-reselection flags. They are only updated from frames whose CRC is OK.
 * **PBCH constellation.** The equalised PBCH symbols (432 QPSK points per SSB) with the PBCH CRC result and an EVM computed on
   the server. One frame is produced per SSB period, so it updates continuously, a few frames per second (throttled to 10 per second;
   the newest frames are drawn brightest). The panel shows the last 8 frames. It needs nothing but a decoded PBCH, so it also works on cells
@@ -77,7 +83,7 @@ Files changed or added in nrscope / srsRAN:
 | file | change |
 |---|---|
 | `src/nrscope/src/libs/prb_power_dump.cc`, `hdr/prb_power_dump.h` | ZeroMQ publisher, per-slot power, per-symbol power, `pbch_const_tap()` (PBCH constellation), `send_pdsch_constellation()` (SIB1, no longer used by the viewer) |
-| `src/lib/src/phy/phch/pbch_nr.c`, `include/srsran/phy/phch/pbch_nr.h` | new hook `srsran_pbch_nr_const_cb`, called with the equalised PBCH symbols after every PBCH decode |
+| `src/lib/src/phy/phch/pbch_nr.c`, `include/srsran/phy/phch/pbch_nr.h` | new hook `srsran_pbch_nr_const_cb(symbols, n, crc_ok, mib_fields)`, called after every PBCH decode with the equalised symbols and the unpacked MIB |
 | `src/nrscope/src/libs/sibs_decoder.cc` | calls `send_pdsch_constellation()` after each successful SIB1 PDSCH decode; keeps decoding when `NRSCOPE_SIB1C` is set (off by default) |
 | `src/nrscope/src/libs/nrscope_worker.cc` | SIB1 thread keeps running when `NRSCOPE_SIB1C` or `NRSCOPE_SIB1DBG` is set |
 | `src/nrscope/src/libs/radio_nr.cc` | optional sync debug print (`NRSCOPE_CFO_DBG`), token-leak fix |
@@ -100,7 +106,7 @@ abs_slot = (sf_round*1024 + sfn) * 20 + slot_idx        (30 kHz SCS, 20 slots pe
 |---|---|---|---|
 | `prb` | 1 | `nprb` x u8, mean power per PRB, `q = (dB + 100) * 1.8`, `0` = missing (`dB = q/1.8 - 100`) | per-slot waterfall |
 | `sym` | 2 | `flags` (= 14) x `nprb` bytes, same encoding, one row per OFDM symbol | per-symbol view (`NRSCOPE_SYM=1`) |
-| `pbchc` | 6 | equalised PBCH symbols as int8 I/Q pairs (432 per frame), flags bit0 = CRC ok, `prb_lo` = number of symbols, float32 at offset 22 unused | PBCH constellation (`NRSCOPE_PBCHC=1`) |
+| `pbchc` | 6 | equalised PBCH symbols as int8 I/Q pairs (432 per frame), flags bit0 = CRC ok, bit7 = MIB trailer present, `prb_lo` = number of symbols, float32 at offset 22 unused, optional trailer after the symbols: 10 x u32 (sfn, ssb_idx, hrf, scs_common, k_ssb, dmrs_typeA_pos, coreset0_idx, ss0_idx, cell_barred, intra_freq_reselection) | PBCH constellation (`NRSCOPE_PBCHC=1`) |
 | `sib1c` | 5 | equalised SIB1 PDSCH symbols (up to 4000 per frame) | not subscribed by the server any more (`NRSCOPE_SIB1C=1`) |
 | `iq` | 3 | raw cf32 around the SSB | disabled (the server ignores it, `NRSCOPE_SSB_PRB` is no longer set) |
 

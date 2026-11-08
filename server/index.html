@@ -31,6 +31,7 @@
   <label>max <input id="dbmax" type="number" value="30" step="1"></label>
   <label><input id="ov_tdd" type="checkbox" checked>TDD</label>
   <label><input id="ov_ssb" type="checkbox" checked>SSB</label>
+  <label><input id="ov_ssbd" type="checkbox" checked>PSS/SSS/PBCH</label>
   <label><input id="ov_cs0" type="checkbox" checked>CORESET0/SIB1</label>
   <label><input id="ov_frm" type="checkbox" checked>SFN/slots</label>
   <label><input id="ov_const" type="checkbox" checked>PBCH constellation</label>
@@ -281,6 +282,20 @@ function draw(){
   function X(abs){ return G.px + (abs - left) * cw; }
   function Y(prb){ return G.py + G.ph - (prb - LO + 1) * rh; }        // top edge of PRB row
   function Yb(prb){ return G.py + G.ph - (prb - LO) * rh; }           // bottom edge
+  // PSS / SSS / PBCH (carries the MIB) inside one SSB block: bx = left edge, bw = width of its 4 symbols; the SSB is 240 subcarriers = 20 PRB
+  function ssbParts(bx, bw){
+    var sw = bw / 4, lo = meta.ssb.prb_lo;
+    function yy(sc){ return Yb(lo) - sc / 12 * rh; }
+    var parts = [['PSS', 0, 56, 183, '#4da3ff'], ['PBCH', 1, 0, 240, '#ff9f43'], ['SSS', 2, 56, 183, '#5ee07a'], ['PBCH', 2, 0, 48, '#ff9f43'], ['PBCH', 2, 192, 240, '#ff9f43'], ['PBCH', 3, 0, 240, '#ff9f43']];
+    ctx.save(); ctx.lineWidth = 1; ctx.textAlign = 'center';
+    parts.forEach(function(p){
+      var x = bx + p[1] * sw, y1 = yy(p[3]), y0 = yy(p[2]);
+      ctx.globalAlpha = 0.2; ctx.fillStyle = p[4]; ctx.fillRect(x, y1, sw, y0 - y1);
+      ctx.globalAlpha = 0.95; ctx.strokeStyle = p[4]; ctx.strokeRect(x + 0.5, y1 + 0.5, sw - 1, y0 - y1 - 1);
+      if (sw >= 24 && (p[3] - p[2]) >= 100) { ctx.fillStyle = '#fff'; ctx.font = 'bold 10px system-ui'; ctx.fillText(p[0], x + sw / 2, (y0 + y1) / 2 + 3); }
+    });
+    ctx.restore();
+  }
 
   var spf = meta.slots_per_frame || 20;
   var tddOn = $('ov_tdd').checked, ssbOn = $('ov_ssb').checked, csOn = $('ov_cs0').checked, frOn = $('ov_frm').checked;
@@ -319,6 +334,7 @@ function draw(){
           var bs0 = useRuns ? runs[bi][0] : blk[bi].s, bn0 = useRuns ? runs[bi][1] : (meta.ssb.nsym || 4);
           var bx = x0 + cw * bs0 / S, bw = cw * bn0 / S;
           ctx.strokeRect(bx + 0.5, Y(meta.ssb.prb_hi - 1), Math.max(bw - 1, 1), (meta.ssb.prb_hi - meta.ssb.prb_lo) * rh);
+          if ($('ov_ssbd').checked && useRuns && bn0 === (meta.ssb.nsym || 4) && bw >= 40) ssbParts(bx, bw);
           if (bw >= 16) { ctx.fillStyle = '#fff'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center'; ctx.fillText('SSB b' + blk[bi].b, bx + bw / 2, Y(meta.ssb.prb_hi - 1) - 4); ctx.font = '9px system-ui'; }
         }
       } else {
@@ -405,11 +421,11 @@ function draw(){
 
   // PBCH constellation (equalised QPSK symbols from nrscope's PBCH decoder, one frame per SSB; newest frames brightest)
   if (iqOn && $('ov_const').checked) {
-    var cs = 170, cwid = cs + 20, chgt = cs + 62, cx0 = G.px + G.pw - cwid - 8, cy0 = G.py + 8;
+    var cs = 170, cwid = 250, chgt = cs + 106, cx0 = G.px + G.pw - cwid - 8, cy0 = G.py + 8;
     ctx.fillStyle = 'rgba(15,20,25,0.88)'; ctx.fillRect(cx0, cy0, cwid, chgt);
     ctx.strokeStyle = '#33414e'; ctx.lineWidth = 1; ctx.strokeRect(cx0 + 0.5, cy0 + 0.5, cwid, chgt);
     var lastS = sibQ.length ? sibQ[sibQ.length - 1] : null;
-    var bx0 = cx0 + 10, by0 = cy0 + 34, half = cs / 2, rng = 1.6;
+    var bx0 = cx0 + (cwid - cs) / 2, by0 = cy0 + 34, half = cs / 2, rng = 1.6;
     ctx.strokeStyle = '#26323d'; ctx.strokeRect(bx0 + 0.5, by0 + 0.5, cs, cs);
     ctx.beginPath(); ctx.moveTo(bx0, by0 + half); ctx.lineTo(bx0 + cs, by0 + half); ctx.moveTo(bx0 + half, by0); ctx.lineTo(bx0 + half, by0 + cs); ctx.stroke();
     if (!lastS || lastS.mod === 2) {                                       // ideal QPSK points
@@ -430,6 +446,15 @@ function draw(){
     ctx.fillText('PBCH' + (lastS ? '  ' + modName + '  CRC ' + (lastS.crc ? 'OK' : 'KO') : ''), cx0 + 10, cy0 + 15);
     ctx.font = '10px system-ui'; ctx.fillStyle = '#9fb0bf';
     ctx.fillText(lastS ? (lastS.evm != null ? 'EVM ' + lastS.evm.toFixed(0) + '%   ' : '') + lastS.n + ' symbols  \u00b7  ' + ((performance.now() - lastS.at) / 1000).toFixed(1) + ' s ago' : 'waiting for a PBCH decode...', cx0 + 10, cy0 + 28);
+    var mb = lastS && lastS.mib;
+    ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 10px system-ui';
+    ctx.fillText(mb ? 'MIB  SFN ' + mb.sfn + '  \u00b7  SSB idx ' + mb.ssb + '  \u00b7  SCS ' + mb.scs + ' kHz' : 'MIB: waiting for a PBCH with CRC OK', cx0 + 10, by0 + cs + 16);
+    ctx.font = '10px system-ui'; ctx.fillStyle = '#9fb0bf';
+    if (mb) {
+      ctx.fillText('k_SSB ' + mb.kssb + '  \u00b7  DM-RS typeA pos ' + mb.dmrs + '  \u00b7  half frame ' + mb.hrf, cx0 + 10, by0 + cs + 30);
+      ctx.fillText('CORESET0 idx ' + mb.cs0 + '  \u00b7  SearchSpace0 idx ' + mb.ss0, cx0 + 10, by0 + cs + 44);
+      ctx.fillText('cell barred: ' + (mb.barred ? 'yes' : 'no') + '  \u00b7  intra-freq reselection: ' + (mb.intra ? 'allowed' : 'not allowed'), cx0 + 10, by0 + cs + 58);
+    }
     ctx.fillText('green = CRC OK, orange = CRC failed', cx0 + 10, cy0 + chgt - 6);
     ctx.textAlign = 'left';
   }

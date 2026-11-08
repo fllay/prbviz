@@ -17,7 +17,7 @@
 #include <zmq.h>
 
 extern "C" {
-extern void (*srsran_pbch_nr_const_cb)(const cf_t* symbols, uint32_t nof_symbols, bool crc_ok);
+extern void (*srsran_pbch_nr_const_cb)(const cf_t* symbols, uint32_t nof_symbols, bool crc_ok, const uint32_t* mib_fields);
 }
 
 namespace PRBPowerDump {
@@ -366,22 +366,25 @@ void send_pdsch_constellation(const cf_t* d, uint32_t n, uint32_t mod_bits, bool
 }
 
 
-// Equalised PBCH symbols (432 QPSK points per SSB), ZeroMQ topic "pbchc" (header version 6, flags bit0 = CRC ok, bits1.. = 2 bits/symbol,
-// "prb_lo" field = number of symbols; payload = float32 (0), then n x (int8 re, int8 im) scaled by 80). Called from srsran_pbch_nr_decode().
-void pbch_const_tap(const cf_t* d, uint32_t n, bool crc)
+// Equalised PBCH symbols (432 QPSK points per SSB), ZeroMQ topic "pbchc" (header version 6, flags bit0 = CRC ok, bits1..6 = bits/symbol (2),
+// bit7 = MIB trailer present, "prb_lo" field = number of symbols; payload = float32 (0), n x (int8 re, int8 im) scaled by 80, then
+// optionally 10 x uint32 MIB fields: sfn, ssb_idx, hrf, scs_common, k_ssb, dmrs_typeA_pos, coreset0_idx, ss0_idx, cell_barred, intra_freq_resel).
+// Called from srsran_pbch_nr_decode().
+void pbch_const_tap(const cf_t* d, uint32_t n, bool crc, const uint32_t* mib_fields)
 {
   ZmqPub& z = zpub();
   if (!z.sock || d == nullptr || n == 0) {
     return;
   }
   n = std::min<uint32_t>(n, 4000);
-  std::vector<uint8_t> buf(22 + 4 + (size_t)n * 2);
+  const size_t         trailer = mib_fields ? 40 : 0;
+  std::vector<uint8_t> buf(22 + 4 + (size_t)n * 2 + trailer);
   uint16_t magic = 0x5052, np = (uint16_t)n;
   int16_t  gain = (int16_t)std::lround(g_rx_gain.load() * 10.0f);
   memset(buf.data(), 0, buf.size());
   memcpy(buf.data() + 0, &magic, 2);
   buf[2] = 6;
-  buf[3] = (uint8_t)((crc ? 1 : 0) | (2 << 1));
+  buf[3] = (uint8_t)((crc ? 1 : 0) | (2 << 1) | (mib_fields ? 0x80 : 0));
   memcpy(buf.data() + 16, &gain, 2);
   memcpy(buf.data() + 18, &np, 2);
   int8_t* out = (int8_t*)(buf.data() + 26);
@@ -390,6 +393,9 @@ void pbch_const_tap(const cf_t* d, uint32_t n, bool crc)
     float im = std::min(127.0f, std::max(-127.0f, __imag__ d[i] * 80.0f));
     out[2 * i]     = (int8_t)std::lround(re);
     out[2 * i + 1] = (int8_t)std::lround(im);
+  }
+  if (mib_fields) {
+    memcpy(buf.data() + 26 + (size_t)n * 2, mib_fields, 40);
   }
   z.publish("pbchc", buf.data(), buf.size());
 }

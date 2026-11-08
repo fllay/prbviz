@@ -232,7 +232,11 @@ class Hub:
         evm_rx = struct.unpack_from('<f', d, 22)[0]
         a = np.frombuffer(d, dtype=np.int8, count=2 * n, offset=26).astype(np.float32) / 80.0
         p = a[0::2] + 1j * a[1::2]
-        mod = flags >> 1
+        mod = (flags >> 1) & 0x3f
+        mib = None
+        if (flags & 0x80) and len(d) >= 26 + 2 * n + 40:
+            f = struct.unpack_from('<10I', d, 26 + 2 * n)
+            mib = dict(sfn=f[0], ssb=f[1], hrf=f[2], scs=15 << f[3], kssb=f[4], dmrs=f[5], cs0=f[6], ss0=f[7], barred=f[8], intra=f[9])
         evm = None
         if mod == 2 and n > 8:                                  # QPSK: error vector magnitude against the nearest ideal point
             q = p / np.sqrt(np.mean(np.abs(p) ** 2) + 1e-12)
@@ -240,7 +244,7 @@ class Hub:
             evm = float(np.sqrt(np.mean(np.abs(q - ideal) ** 2)) * 100)
         step = max(1, n // 900)
         pts = [[round(float(v.real), 2), round(float(v.imag), 2)] for v in p[::step]]
-        msg = dict(pbch=dict(pts=pts, n=int(n), mod=int(mod), crc=int(flags & 1), evm=None if evm is None else round(evm, 1),
+        msg = dict(pbch=dict(pts=pts, n=int(n), mod=int(mod), mib=mib, crc=int(flags & 1), evm=None if evm is None else round(evm, 1),
                              evm_rx=round(float(evm_rx), 3), sfn=int(sfn), slot=int(slot_idx), abs=int(abs_slot)))
         line = json.dumps(msg, separators=(',', ':'))
         self.sib_cache.append((now, msg))
