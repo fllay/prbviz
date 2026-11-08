@@ -173,6 +173,9 @@ class Hub:
         self.iq_last_try = 0.0
         self.sib_last = 0.0
         self.sib_cache = []             # last few SIB1 constellation frames, replayed to newly connected pages
+        self.dci_buf = []               # DCI events (from nrscope's PDCCH decoders) waiting to be sent, flushed every 50 ms
+        self.dci_last = 0.0
+        self.dci_cache = []             # newest events, replayed to newly connected pages
         self.scs = 30.0
         self.pss_d = {}
         self.sss_d = None
@@ -282,13 +285,20 @@ class Hub:
         sock.setsockopt(zmq.SUBSCRIBE, b'sym')
         sock.setsockopt(zmq.SUBSCRIBE, b'iq')
         sock.setsockopt(zmq.SUBSCRIBE, b'pbchc')
+        sock.setsockopt(zmq.SUBSCRIBE, b'dci')
         sock.connect(endpoint)             # nrscope BINDs; we may start before or after it and reconnect automatically
         while True:
+            if not sock.poll(50):
+                self.dci_flush()
+                continue
             parts = sock.recv_multipart()
+            self.dci_flush()
             if len(parts) != 2:
                 self.stat['bad'] += 1
                 continue
-            if parts[0] == b'sym':
+            if parts[0] == b'dci':
+                self.ingest_dci(parts[1])
+            elif parts[0] == b'sym':
                 self.ingest_sym(parts[1])
             elif parts[0] == b'iq':
                 self.ingest_iq(parts[1])
@@ -312,6 +322,39 @@ class Hub:
                 return
             self.nsym = nsym
             self.srows[abs_slot] = d[HDR.size:HDR.size + nsym * npr]
+
+    RNTI_T = ['C', 'P', 'SI', 'RA', 'TC', 'CS', 'SP-CSI', 'MCS-C']
+    DCI_F = ['0_0', '0_1', '1_0', '1_1', '2_0', '2_1', '2_2', '2_3', 'rar', 'cg']
+
+    def ingest_dci(self, d):
+        """One DCI found by nrscope's blind search: exact RNTI, format, CORESET, first CCE and aggregation level (L = log2 of the AL)."""
+        if len(d) < 22 + 12:
+            return
+        magic, ver, _n, abs_slot, sfn, slot_idx, _r, gain, _lo, _np = HDR.unpack_from(d, 0)
+        if magic != 0x5052 or ver != 7:
+            self.stat['bad'] += 1
+            return
+        rnti, rt, fm, cs, L, ncce, dr, ss, _z = struct.unpack_from('<HBBBBHBBH', d, 22)
+        ev = [int(abs_slot + self.shift), int(rnti), self.RNTI_T[rt] if rt < len(self.RNTI_T) else str(rt),
+              self.DCI_F[fm] if fm < len(self.DCI_F) else str(fm), int(cs), int(L), int(ncce), int(dr), int(ss)]
+        self.dci_buf.append(ev)
+        self.stat['dci'] = self.stat.get('dci', 0) + 1
+
+    def dci_flush(self):
+        now = time.time()
+        if not self.dci_buf or now - self.dci_last < 0.05:
+            return
+        self.dci_last = now
+        evs, self.dci_buf = self.dci_buf, []
+        self.dci_cache = (self.dci_cache + evs)[-600:]
+        line = json.dumps(dict(dci=evs), separators=(',', ':'))
+        with self.cl_lock:
+            for q_ in list(self.clients):
+                if getattr(q_, 'dci', False):
+                    try:
+                        q_.put_nowait(line)
+                    except queue.Full:
+                        pass
 
     def ingest_pbchc(self, d):
         """Equalised PBCH symbols (432 QPSK points per SSB) from nrscope's PBCH decoder -> constellation frame for the browsers (<= 10/s)."""
@@ -592,6 +635,9 @@ def make_handler(hub, meta_path):
                 q = queue.Queue(maxsize=400)
                 q.sym = 'sym=1' in self.path
                 q.iq = 'iq=1' in self.path
+                q.dci = 'dci=1' in self.path
+                if q.dci and hub.dci_cache:
+                    q.put_nowait(json.dumps(dict(dci=list(hub.dci_cache)), separators=(',', ':')))
                 if q.iq:
                     for t_, m_ in list(hub.sib_cache):          # replay the last SIB1 constellations (they only exist while the grid timing is good)
                         mm = dict(pbch=dict(m_['pbch'], age=round(time.time() - t_, 1)))

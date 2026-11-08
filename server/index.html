@@ -79,6 +79,14 @@ var R = 4096;                       // ring size in slots
 var meta = {}, NP = 0, LO = 0;
 var ring = null, ringAbs = new Float64Array(R).fill(-1), gainRing = new Int16Array(R);
 var sibQ = [], iqOn = true;
+// exact PDCCH decisions from nrscope: dciAt[abs slot] = [[abs, rnti, rnti type, format, coreset id, log2 AL, first CCE, dir (0 DL, 1 UL), ss type], ...]
+var dciAt = {}, dciN = 0, dciLast = 0;
+function dciIn(list){
+  for (var i = 0; i < list.length; i++) { var e = list[i]; (dciAt[e[0]] = dciAt[e[0]] || []).push(e); }
+  dciLast = performance.now();
+  if (((dciN += list.length) & 255) < list.length) for (var k in dciAt) if (+k < newest - R) delete dciAt[k];
+}
+function dciCs0(a){ var l = dciAt[a], out = [], i; if (l) for (i = 0; i < l.length; i++) if (l[i][4] === 0) out.push(l[i]); return out; }
 var S = 14, symOn = false, symRing = null, symOk = new Uint8Array(R);
 var newest = -1, W = 400, dbMin = -15, dbMax = 30;
 var paused = false, snap = null, es = null;
@@ -118,6 +126,7 @@ function setMeta(m){ meta = m; if (m.name) $('cell').textContent = m.name + ' | 
 if (!window.__DEMO) fetch('/meta').then(function(r){ return r.json(); }).then(setMeta).catch(function(){});
 
 function onMsg(m){
+  if (m.dci) { dciIn(m.dci); return; }
   if (m.pbch) { m.pbch.at = performance.now() - (m.pbch.age || 0) * 1000; sibQ.push(m.pbch); if (sibQ.length > 8) sibQ.shift(); return; }
   var u = b64(m.data);
   if (m.align !== undefined) { serverAlign = true; serverShift = m.align; serverMode = m.amode || 'ssb'; }
@@ -147,7 +156,7 @@ if (window.__DEMO) {
 }
 function openStream(){
   if (es) es.close();
-  var qs = (symOn ? 'sym=1&' : '') + (iqOn ? 'iq=1' : '');
+  var qs = 'dci=1' + (symOn ? '&sym=1' : '') + (iqOn ? '&iq=1' : '');
   es = new EventSource('/stream' + (qs ? '?' + qs : ''));
   es.onmessage = function(e){ onMsg(JSON.parse(e.data)); };
   es.onerror = function(){ $('live').className = ''; };
@@ -281,7 +290,7 @@ function cs0Msg(t){ $('cs0msg').textContent = t; clearTimeout(cs0MsgT); cs0MsgT 
 function cs0Occ(){
   var out = [], spf = meta.slots_per_frame || 20, sh = serverAlign ? 0 : calShift, a;
   if (!snap || !meta.coreset0) return out;
-  for (a = snapMin; a <= snap.newest; a++) if (cs0Nominal(a, sh, spf) && cs0Excess(snap, a) > CS0_THR) out.push(a);
+  for (a = snapMin; a <= snap.newest; a++) if (cs0Nominal(a, sh, spf) && (cs0Excess(snap, a) > CS0_THR || dciCs0(a).length)) out.push(a);
   return out;
 }
 function cs0Go(dir){                                        // dir: 0 = newest occasion, -1 = previous (older), +1 = next (newer) than the one in the middle of the window
@@ -555,10 +564,11 @@ function draw(){
       for (p = 0; p < NP; p++) if (p + LO < c0.prb_lo || p + LO >= c0.prb_hi) for (y = sy0; y < sy0 + ns; y++) { var q2 = s.sym[(col * S + y) * NP + p]; if (q2) { ref += Math.pow(10, qToDb(q2) / 10); nref++; } }
       ref = nref >= 8 ? 10 * Math.log10(ref / nref) : mn;           // PRBs next to CORESET0 in the same symbols, else the quietest bundle
     }
-    var xL = x0 + sw * sy0, wB = sw * ns, act = [];
+    var xL = x0 + sw * sy0, wB = sw * ns, act = [], exEv = dciCs0(a), exOn = {};
+    exEv.forEach(function(e){ for (var c = e[6]; c < e[6] + (1 << e[5]); c++) exOn[c] = true; });
     ctx.save(); ctx.font = '9px system-ui'; ctx.textAlign = 'left';
     for (b = 0; b < nB; b++) {
-      var on = ok && pw[b] > ref + CS0_THR, yT = Y(c0.prb_lo + (b + 1) * bw - 1), hB = bw * rh;
+      var on = exEv.length ? !!exOn[cceOf[b]] : (ok && pw[b] > ref + CS0_THR), yT = Y(c0.prb_lo + (b + 1) * bw - 1), hB = bw * rh;
       if (on) act.push(cceOf[b]);
       if (on) { ctx.fillStyle = 'rgba(0,229,255,0.16)'; ctx.fillRect(xL, yT, wB, hB); }
       ctx.strokeStyle = on ? '#00e5ff' : 'rgba(0,229,255,0.4)'; ctx.lineWidth = on ? 1.5 : 1; ctx.strokeRect(xL + 0.5, yT + 0.5, wB - 1, hB - 1);
@@ -573,7 +583,10 @@ function draw(){
         }
       }
     }
-    if (act.length) {
+    if (exEv.length) {
+      ctx.font = 'bold 10px system-ui'; ctx.fillStyle = '#00e5ff';
+      ctx.fillText(exEv.map(function(e){ return 'DCI ' + e[3] + ' ' + e[2] + '-RNTI 0x' + e[1].toString(16) + ' \u00b7 CCE ' + e[6] + (e[5] ? '\u2013' + (e[6] + (1 << e[5]) - 1) : '') + ' \u00b7 AL ' + (1 << e[5]); }).join('  |  '), xL, Y(c0.prb_hi - 1) - 16);
+    } else if (act.length) {
       act.sort(function(u, v){ return u - v; });
       var contig = act[act.length - 1] - act[0] + 1 === act.length;
       ctx.font = 'bold 10px system-ui'; ctx.fillStyle = '#00e5ff';
@@ -663,8 +676,8 @@ function draw(){
       }
       if (!blk && meta.ssb.beams && meta.ssb.beams[si] != null && cw >= 16) { ctx.fillStyle = '#fff'; ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'center'; ctx.fillText('b' + meta.ssb.beams[si], x0 + cw / 2, Y(meta.ssb.prb_hi - 1) + 12); ctx.font = '9px system-ui'; }
     }
-    if (csOn && meta.coreset0 && cs0Nominal(a, sh, spf) && (cs0Excess(s, a) > CS0_THR || $('ov_cs0i').checked)) {
-      var cex = cs0Excess(s, a), cact = cex > CS0_THR;
+    if (csOn && meta.coreset0 && cs0Nominal(a, sh, spf) && (cs0Excess(s, a) > CS0_THR || dciCs0(a).length || $('ov_cs0i').checked)) {
+      var cex = cs0Excess(s, a), cact = cex > CS0_THR || dciCs0(a).length > 0;
       ctx.strokeStyle = cact ? '#00e5ff' : 'rgba(0,229,255,0.3)'; ctx.lineWidth = cact ? 2 : 1; ctx.setLineDash([3, 2]);
       var cs0 = useSym && meta.coreset0.sym_start != null, cx0 = cs0 ? x0 + cw * meta.coreset0.sym_start / S : x0, cwid = cs0 ? cw * (meta.coreset0.nsym || 1) / S : cw;
       ctx.strokeRect(cx0 + 0.5, Y(meta.coreset0.prb_hi - 1), Math.max(cwid - 1, 1), (meta.coreset0.prb_hi - meta.coreset0.prb_lo) * rh);

@@ -1,6 +1,8 @@
 #include "nrscope/hdr/sibs_decoder.h"
 #include "nrscope/hdr/prbviz_quiet.h"
 #include "nrscope/hdr/prb_power_dump.h"
+#include <bitset>
+#include <mutex>
 
 SIBsDecoder::SIBsDecoder(){
   data_pdcch = srsran_vec_u8_malloc(SRSRAN_SLOT_MAX_NOF_BITS_NR);
@@ -90,9 +92,25 @@ int SIBsDecoder::DecodeandParseSIB1fromSlot(srsran_slot_cfg_t* slot,
                                             SlotResult* result) {
   static const bool sib1dbg = std::getenv("NRSCOPE_SIB1DBG") != nullptr; // prbviz: log every SIB1 PDCCH hit (slot/SFN)
   static const bool sib1c = std::getenv("NRSCOPE_SIB1C") != nullptr;    // prbviz: publish the equalised SIB1 PDSCH symbols every time SIB1 is received
-  if (state->all_sibs_found && !sib1dbg && !sib1c) {
+  static const bool dcisi = std::getenv("NRSCOPE_DCI_SI") != nullptr;   // prbviz: keep decoding the SI-RNTI PDCCH after SIB1 is known, to publish its CCEs on topic "dci"
+  if (state->all_sibs_found && !sib1dbg && !sib1c && !dcisi) {
     result->sib_result = false;
     return SRSRAN_SUCCESS;
+  }
+  const bool quiet = dcisi && state->all_sibs_found && !sib1dbg && !sib1c;   // only the DCI tap is wanted: no per-candidate log lines
+  // The tap would run the blind search in every slot. Only search the slot positions (abs mod 320 = 16 frames at 30 kHz) that produced an SI-RNTI DCI before;
+  // until one is known, and for 160 ms every ~10 s, search every slot so new positions (another beam, a changed schedule) are learned.
+  static std::mutex           dci_si_mx;
+  static std::bitset<320>     dci_si_learned;
+  const uint64_t              dci_abs = ((state->cur_sf_round * 1024ULL + state->cur_sfn) * 20ULL) + slot->idx;
+  const unsigned              dci_m   = (unsigned)(dci_abs % 320);
+  if (quiet) {
+    std::lock_guard<std::mutex> lk(dci_si_mx);
+    const bool explore = dci_si_learned.none() || ((dci_abs / 320) % 64) == 0;
+    if (!explore && !dci_si_learned[dci_m]) {
+      result->sib_result = false;
+      return SRSRAN_SUCCESS;
+    }
   }
   
   /* reset the result's elements */
@@ -131,7 +149,7 @@ int SIBsDecoder::DecodeandParseSIB1fromSlot(srsran_slot_cfg_t* slot,
     return SRSRAN_ERROR;
   }
   /* Print PDCCH blind search candidates */
-  for (uint32_t pdcch_idx = 0; pdcch_idx < ue_dl_sibs.pdcch_info_count; pdcch_idx++) {
+  for (uint32_t pdcch_idx = 0; !quiet && pdcch_idx < ue_dl_sibs.pdcch_info_count; pdcch_idx++) {
     const srsran_ue_dl_nr_pdcch_info_t* info = &(ue_dl_sibs.pdcch_info[pdcch_idx]);
     printf("PDCCH: %s-rnti=0x%x, crst_id=%d, ss_type=%s, ncce=%d, al=%d, EPRE=%+.2f, RSRP=%+.2f, corr=%.3f; "
     "nof_bits=%d; crc=%s;\n",
@@ -152,6 +170,15 @@ int SIBsDecoder::DecodeandParseSIB1fromSlot(srsran_slot_cfg_t* slot,
     return SRSRAN_ERROR;
   }
 
+  PRBPowerDump::send_dci_ctx(&dci_sibs.ctx, false, ((state->cur_sf_round * 1024ULL + state->cur_sfn) * 20ULL) + slot->idx, state->cur_sfn, slot->idx);
+  if (quiet) {
+    {
+      std::lock_guard<std::mutex> lk(dci_si_mx);
+      dci_si_learned.set(dci_m);
+    }
+    result->sib_result = false;
+    return SRSRAN_SUCCESS;
+  }
   char str[1024] = {};
   srsran_dci_dl_nr_to_str(&(ue_dl_sibs.dci), &dci_sibs, str, 
     (uint32_t)sizeof(str));

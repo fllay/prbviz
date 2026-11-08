@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include "srsran/phy/common/phy_common.h"
+#include "srsran/phy/phch/dci_nr.h"
 
 namespace PRBPowerDump {
 
@@ -27,6 +28,11 @@ void write_slot(const cf_t* sf_symbols, uint32_t nof_prb, uint32_t slot_idx, uin
 // "prb_lo" field = number of symbols; payload = float32 evm, then n x (int8 re, int8 im) scaled by 80).
 void send_pdsch_constellation(const cf_t* d, uint32_t n, uint32_t mod_bits, bool crc, float evm, uint64_t abs_slot, uint32_t sfn,
                               uint32_t slot_idx);
+
+// A DCI found by the PDCCH blind search (CRC ok), ZeroMQ topic "dci" (header version 7, "nsym" field = 1), published when NRSCOPE_DCI is set.
+// 22-byte header, then: u16 rnti | u8 rnti_type | u8 format | u8 coreset_id | u8 L (log2 of the aggregation level) | u16 ncce (first CCE) |
+//                       u8 dir (0 = DL grant, 1 = UL grant) | u8 ss_type | u16 reserved
+void send_dci_ctx(const srsran_dci_ctx_t* ctx, bool ul, uint64_t abs_slot, uint32_t sfn, uint32_t slot_idx);
 
 void close();
 

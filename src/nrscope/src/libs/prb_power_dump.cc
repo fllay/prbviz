@@ -366,6 +366,37 @@ void send_pdsch_constellation(const cf_t* d, uint32_t n, uint32_t mod_bits, bool
 }
 
 
+void send_dci_ctx(const srsran_dci_ctx_t* c, bool ul, uint64_t abs_slot, uint32_t sfn, uint32_t slot_idx)
+{
+  static const bool on = std::getenv("NRSCOPE_DCI") != nullptr;
+  ZmqPub& z = zpub();
+  if (!on || !z.sock || c == nullptr) {
+    return;
+  }
+  uint8_t  buf[22 + 12];
+  uint16_t magic = 0x5052, sfn16 = (uint16_t)sfn, zero16 = 0, one16 = 1, rnti = c->rnti, ncce = (uint16_t)c->location.ncce;
+  int16_t  gain = (int16_t)std::lround(g_rx_gain.load() * 10.0f);
+  memset(buf, 0, sizeof(buf));
+  memcpy(buf + 0, &magic, 2);
+  buf[2] = 7;
+  buf[3] = 1;
+  memcpy(buf + 4, &abs_slot, 8);
+  memcpy(buf + 12, &sfn16, 2);
+  buf[14] = (uint8_t)slot_idx;
+  memcpy(buf + 16, &gain, 2);
+  memcpy(buf + 18, &zero16, 2);
+  memcpy(buf + 20, &one16, 2);
+  memcpy(buf + 22, &rnti, 2);
+  buf[24] = (uint8_t)c->rnti_type;
+  buf[25] = (uint8_t)c->format;
+  buf[26] = (uint8_t)c->coreset_id;
+  buf[27] = (uint8_t)c->location.L;
+  memcpy(buf + 28, &ncce, 2);
+  buf[30] = ul ? 1 : 0;
+  buf[31] = (uint8_t)c->ss_type;
+  z.publish("dci", buf, sizeof(buf));
+}
+
 // Equalised PBCH symbols (432 QPSK points per SSB), ZeroMQ topic "pbchc" (header version 6, flags bit0 = CRC ok, bits1..6 = bits/symbol (2),
 // bit7 = MIB trailer present, "prb_lo" field = number of symbols; payload = float32 (0), n x (int8 re, int8 im) scaled by 80, then
 // optionally 10 x uint32 MIB fields: sfn, ssb_idx, hrf, scs_common, k_ssb, dmrs_typeA_pos, coreset0_idx, ss0_idx, cell_barred, intra_freq_resel).

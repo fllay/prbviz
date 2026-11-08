@@ -100,6 +100,8 @@ Tick **REG/CCE/DMRS** (per-symbol view, window of about 10 slots or less) to see
   Bundle `b` carries CCE `i` with `b = (r*C + c + PCI) mod nB`, `i = 2c + r`, `C = nB/2`. The label `C<i>` in every bundle is that CCE number.
 * **Active CCEs.** A bundle is drawn bright when its mean power is more than 8 dB above the PRBs next to CORESET0 in the same symbols; the label above the box then reads e.g. `PDCCH CCE 0-3 - AL 4`.
   On the testbed this matches the SIB1 DCI exactly: PRBs 3-8 and 15-20 of symbols 0-1, which is CCEs 0-3 (aggregation level 4).
+* **Exact CCEs from the decoder.** nrscope publishes every DCI it decodes on the `dci` topic (RNTI, RNTI type, DCI format, CORESET id, first CCE, aggregation level). When the viewer has such an event for a CORESET0 slot it uses it instead of the power test, and the label reads e.g. `DCI 1_0 SI-RNTI 0xffff - CCE 0-3 - AL 4` (testbed) or `... CCE 0-7 - AL 8` (n41). Slots without an event fall back to the power test (`PDCCH CCE ... - AL ...`), so the two labels tell you which one you are looking at.
+  Sources: SI-RNTI (SIB1), C-RNTI grants of the known UEs (DL and UL), and Msg4 TC-RNTI grants whose PDSCH decoded. Only CORESET 0 is drawn, because the geometry of the other CORESETs comes from RRC and is not in the meta. To keep the CPU load down the SI-RNTI search runs only in the slot positions (mod 320) that decoded before, plus a full search for 160 ms every ~10 s to learn new ones; on the testbed a few percent of the SIB1 occasions are not decoded and fall back to the power test.
 * **DMRS.** The dots are the PDCCH DMRS positions, subcarriers 1, 5 and 9 of every REG (25 % of the REs). They are drawn from the standard, not measured: the grid has one value per PRB, so real DMRS power would need a per-subcarrier tap in nrscope. Dots appear when a PRB row is at least 12 px high (about 80 PRBs on a full-height screen), the REG lines at 10 px.
 
 ## Layout
@@ -144,6 +146,7 @@ abs_slot = (sf_round*1024 + sfn) * 20 + slot_idx        (30 kHz SCS, 20 slots pe
 | `prb` | 1 | `nprb` x u8, mean power per PRB, `q = (dB + 100) * 1.8`, `0` = missing (`dB = q/1.8 - 100`) | per-slot waterfall |
 | `sym` | 2 | `flags` (= 14) x `nprb` bytes, same encoding, one row per OFDM symbol | per-symbol view (`NRSCOPE_SYM=1`) |
 | `pbchc` | 6 | equalised PBCH symbols as int8 I/Q pairs (432 per frame), flags bit0 = CRC ok, bit7 = MIB trailer present, `prb_lo` = number of symbols, float32 at offset 22 unused, optional trailer after the symbols: 10 x u32 (sfn, ssb_idx, hrf, scs_common, k_ssb, dmrs_typeA_pos, coreset0_idx, ss0_idx, cell_barred, intra_freq_reselection) | PBCH constellation (`NRSCOPE_PBCHC=1`) |
+| `dci` | 7 | one DCI per message, after the 22-byte header: u16 rnti, u8 rnti_type (0 C, 1 P, 2 SI, 3 RA, 4 TC), u8 format (0 0_0, 1 0_1, 2 1_0, 3 1_1), u8 coreset_id, u8 L (log2 of the aggregation level), u16 first CCE, u8 dir (0 DL, 1 UL), u8 ss_type, u16 reserved | exact CCEs in CORESET0 (`NRSCOPE_DCI=1`); the server relays batches to pages that open `/stream?dci=1` |
 | `sib1c` | 5 | equalised SIB1 PDSCH symbols (up to 4000 per frame) | not subscribed by the server any more (`NRSCOPE_SIB1C=1`) |
 | `iq` | 3 | raw cf32 around the SSB | disabled (the server ignores it, `NRSCOPE_SSB_PRB` is no longer set) |
 
@@ -341,6 +344,8 @@ decoder result on commercial cells.
 | `NRSCOPE_PBCHC=1` | publish the `pbchc` topic (PBCH constellation, set by `start.sh`) |
 | `NRSCOPE_SIB1C=1` | keep decoding SIB1 and publish `sib1c` (off by default, the viewer ignores it) |
 | `NRSCOPE_SIB1DBG` | keep the SIB1 thread running for debugging |
+| `NRSCOPE_DCI=1` | publish the `dci` topic: one message per decoded DCI (set by `start.sh`) |
+| `NRSCOPE_DCI_SI=1` | keep searching the SI-RNTI PDCCH after SIB1 is known so SIB1 DCIs are published too (set by `start.sh`) |
 | `NRSCOPE_PRB_CSV=0` | disable the CSV dump |
 | `NRSCOPE_PRB_DECIM=N` | keep every Nth slot |
 | `NRSCOPE_STREAM=host:port` | legacy UDP datagram output (server `--udp host:port`) |

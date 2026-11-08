@@ -1,4 +1,5 @@
 #include "nrscope/hdr/dci_decoder.h"
+#include "nrscope/hdr/prb_power_dump.h"
 
 DCIDecoder::DCIDecoder(uint32_t max_nof_rntis)
 {
@@ -1035,6 +1036,10 @@ int DCIDecoder::DecodeandParseDCIfromSlot(srsran_slot_cfg_t*                   s
     int nof_ul_dci = srsran_ue_dl_nr_find_ul_dci(
         ue_dl_tmp, slot_tmp, sharded_rntis[dci_decoder_id][rnti_idx], srsran_rnti_type_c, dci_ul_tmp, 4);
 
+    for (int ti = 0; ti < nof_dl_dci && ti < 4; ti++)
+      PRBPowerDump::send_dci_ctx(&dci_dl_tmp[ti].ctx, false, ((state->cur_sf_round * 1024ULL + state->cur_sfn) * 20ULL) + slot->idx, state->cur_sfn, slot->idx);
+    for (int ti = 0; ti < nof_ul_dci && ti < 4; ti++)
+      PRBPowerDump::send_dci_ctx(&dci_ul_tmp[ti].ctx, true, ((state->cur_sf_round * 1024ULL + state->cur_sfn) * 20ULL) + slot->idx, state->cur_sfn, slot->idx);
     if (nof_dl_dci > 0) {
       dci_dl[rnti_idx] = dci_dl_tmp[0];
       total_dl_dci += nof_dl_dci;
@@ -1113,6 +1118,10 @@ int DCIDecoder::DecodeandParseDCIfromSlot(srsran_slot_cfg_t*                   s
     int nof_ul_dci_nca = srsran_ue_dl_nr_find_ul_dci(
         ue_dl_tmp, slot_tmp, sharded_rntis[dci_decoder_id][rnti_idx], srsran_rnti_type_c, dci_ul_tmp, 4);
 
+    for (int ti = 0; ti < nof_dl_dci_nca && ti < 4; ti++)
+      PRBPowerDump::send_dci_ctx(&dci_dl_tmp[ti].ctx, false, ((state->cur_sf_round * 1024ULL + state->cur_sfn) * 20ULL) + slot->idx, state->cur_sfn, slot->idx);
+    for (int ti = 0; ti < nof_ul_dci_nca && ti < 4; ti++)
+      PRBPowerDump::send_dci_ctx(&dci_ul_tmp[ti].ctx, true, ((state->cur_sf_round * 1024ULL + state->cur_sfn) * 20ULL) + slot->idx, state->cur_sfn, slot->idx);
     if (nof_dl_dci_nca > 0) {
       dci_dl[rnti_idx] = dci_dl_tmp[0];
       total_dl_dci += nof_dl_dci_nca;

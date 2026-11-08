@@ -291,7 +291,7 @@ void NRScopeWorker::Run()
 
     std::thread sibs_thread;
     /* If sib1 is not found, we run the sibs_thread; if it's found, we skip. */
-    if (worker_state.sib1_inited and (!worker_state.sib1_found || std::getenv("NRSCOPE_SIB1DBG") || std::getenv("NRSCOPE_SIB1C"))) {
+    if (worker_state.sib1_inited and (!worker_state.sib1_found || std::getenv("NRSCOPE_SIB1DBG") || std::getenv("NRSCOPE_SIB1C") || std::getenv("NRSCOPE_DCI_SI"))) {
       if (worker_state.cpu_affinity) {
         cpu_set_t cpu_set_sib;
         CPU_ZERO(&cpu_set_sib);
