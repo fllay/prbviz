@@ -53,7 +53,7 @@ scripts/scan_plmn.py config/xxx.yaml   # nrscan + SIB1 of every cell found: PLMN
   re-tunes the B210 and reloads the page after 15-40 s. It affects everybody watching this server. Only ids from `cells.json` are accepted
   (`POST /select`, same-origin only; `GET /cells` lists them). To add a band, add a nrscope yaml + a meta json and one entry in `cells.json`.
   The running cell is remembered in `run/cell.id` (written by `start.sh`).
-* Logs: `run/logs/nrscope.log`, `run/logs/server.log`. Build log: `build.log` (ends with `BUILD_DONE`).
+* Logs: `run/logs/nrscope.log` (rotated by `scripts/rotlog.py`: 5 files of 20 MB, `nrscope.log` and `.1` ... `.4`; `NRSCOPE_LOG_MB` / `NRSCOPE_LOG_KEEP` change that; the previous run is rotated away at start), `run/logs/server.log` (restarted with the server, a few KB per hour). Build log: `build.log` (ends with `BUILD_DONE`).
 * Use the lowest GSCN of a cluster reported by `nrscan`. nrscope on a wrong GSCN prints repeated RF overflows and exits.
 * The radio is exclusive: scan, validate and live view cannot run at the same time.
 

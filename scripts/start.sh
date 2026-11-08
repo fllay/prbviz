@@ -33,7 +33,7 @@ nohup setsid python3 "$ROOT/server/server.py" --zmq "$ZMQ_ENDPOINT" --http "$HTT
       > logs/server.log 2>&1 < /dev/null &
 echo $! > server.pid
 sleep 1
-NRSCOPE_DCI=1 NRSCOPE_DCI_SI=1 NRSCOPE_PBCHC=1 NRSCOPE_SYM=1 NRSCOPE_ZMQ="$ZMQ_ENDPOINT" NRSCOPE_PRB_CSV=0 NRSCOPE_BIN="$ROOT/build/nrscope/src/nrscope" \
-      nohup setsid "$ROOT/scripts/nrscope_loop.sh" > logs/nrscope.log 2>&1 < /dev/null &
+NRSCOPE_DCI=1 NRSCOPE_DCI_SI=1 NRSCOPE_PBCHC=1 NRSCOPE_SYM=1 NRSCOPE_ZMQ="$ZMQ_ENDPOINT" NRSCOPE_PRB_CSV=0 NRSCOPE_LOG="$RUN/logs/nrscope.log" NRSCOPE_BIN="$ROOT/build/nrscope/src/nrscope" \
+      nohup setsid "$ROOT/scripts/nrscope_loop.sh" > /dev/null 2>&1 < /dev/null &
 echo $! > nrscope.pid
 echo "started: server pid $(cat server.pid), nrscope pid $(cat nrscope.pid); open http://$(hostname -I | awk '{print $1}'):${HTTP##*:}/"
