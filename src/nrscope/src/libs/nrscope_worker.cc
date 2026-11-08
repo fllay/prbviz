@@ -284,7 +284,7 @@ void NRScopeWorker::Run()
       worker_state.rach_inited = true;
     }
 
-    if (!worker_state.dci_inited && worker_state.rach_found) {
+    if (!worker_state.dci_inited && worker_state.rach_found && !std::getenv("NRSCOPE_NODCI")) {
       InitDCIDecoders();
       worker_state.dci_inited = true;
     }

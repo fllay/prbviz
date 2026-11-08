@@ -348,12 +348,9 @@ int RachDecoder::DecodeandParseMS4fromSlot(srsran_slot_cfg_t* slot, WorkState* s
     printf("RACHDecoder -- Found DCI: %s\n", str);
     tc_rnti = dci_rach[dci_id].ctx.rnti;
 
-    if (state->rach_found) {
-      result->found_rach = true;
-      result->new_rnti_number += 1;
-      result->new_rntis_found.emplace_back(tc_rnti);
-      continue;
-    }
+    // prbviz: once a UE is known, only add a further RNTI if its Msg4 PDSCH passes CRC (checked below). Before this every false CRC
+    // match of the blind search (a few per second) was added to the known-RNTI list and the per-slot DCI decoding grew until nrscope dropped slots.
+    const bool rach_known = state->rach_found;
 
     srsran_sch_cfg_nr_t pdsch_cfg         = {};
     pdsch_cfg.dmrs.typeA_pos              = state->cell.mib.dmrs_typeA_pos;
@@ -409,6 +406,12 @@ int RachDecoder::DecodeandParseMS4fromSlot(srsran_slot_cfg_t* slot, WorkState* s
     }
     // prbviz: only a TC-RNTI DCI whose PDSCH (Msg4) decoded is a real one; the blind search over many RNTIs also yields false CRC matches
     PRBPowerDump::send_dci_ctx(&dci_rach[dci_id].ctx, false, ((state->cur_sf_round * 1024ULL + state->cur_sfn) * 20ULL) + slot->idx, state->cur_sfn, slot->idx);
+    if (rach_known) {
+      result->found_rach = true;
+      result->new_rnti_number += 1;
+      result->new_rntis_found.emplace_back(tc_rnti);
+      continue;
+    }
 
     // Check payload is not all null.
     bool all_zero = true;

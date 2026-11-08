@@ -346,6 +346,7 @@ decoder result on commercial cells.
 | `NRSCOPE_SIB1DBG` | keep the SIB1 thread running for debugging |
 | `NRSCOPE_DCI=1` | publish the `dci` topic: one message per decoded DCI (set by `start.sh`) |
 | `NRSCOPE_DCI_SI=1` | keep searching the SI-RNTI PDCCH after SIB1 is known so SIB1 DCIs are published too (set by `start.sh`) |
+| `NRSCOPE_NODCI=1` | never start the per-UE DCI decoders (grid-only mode: the power grid, SIB1 and the CORESET0 DCI tap keep working) |
 | `NRSCOPE_PRB_CSV=0` | disable the CSV dump |
 | `NRSCOPE_PRB_DECIM=N` | keep every Nth slot |
 | `NRSCOPE_STREAM=host:port` | legacy UDP datagram output (server `--udp host:port`) |
@@ -381,6 +382,8 @@ Measured on the n41 cell, gain 50 dB: nrscan 77 s + SIB1 21 s for 3 hits (one re
 * n41: the power-based CORESET0 activity test (viewer legend, `cs0_interval.py`) finds nothing, although the decoder sees SIB1 every 20 ms per beam (`sib1_period.py`). Slot-average power and an 8-PRB window scan both failed to separate it from the cell traffic, or the PRBs in the meta are wrong (meta: 40 PRBs, decoder: 48). The legend is therefore wrong on n41; the viewer should take the SIB1 occasions from the `sib1c` decodes (or from the MIB) instead of power.
 * `scripts/cs0_interval.py` keeps the SFN parity of `cycle_slots` (n41); before this fix it counted the SSB slots as CORESET0 activity.
 
+* **Fixed: slot drops a few minutes after a UE attached.** Once the first UE was known, `rach_decoder.cc` added every DCI that the TC-RNTI blind search found to the known-RNTI list without checking it. The blind search gives a few false CRC matches per second (random RNTIs), so the list grew and the per-slot DCI decoding with it, until the server reported ~280 missing slots/s and nrscope ran at 1200 % CPU. A further RNTI is now added only if its Msg4 PDSCH decodes with CRC OK. Before the fix the viewer collapsed 2.5 min after start; after it, 8+ min at 2000 slots/s with 0-4 missing.
+* nrscope's resident memory still grows by about 40 MB/min (1.7 GB at start); not investigated.
 * The CORESET0 box in the per-symbol view uses nominal values from the meta file; it has not been verified against the air signal.
 * A RACH decode can crash nrscope with "Invalid PRACH preamble type"; `scripts/nrscope_loop.sh` restarts it.
 * SIB1 EVM assumed QPSK (see modulation notes); the PBCH constellation is always QPSK, so its EVM is valid.
