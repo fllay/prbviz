@@ -45,6 +45,7 @@
   <label><input id="ov_ssbd" type="checkbox" checked>PSS/SSS/PBCH</label>
   <label><input id="ov_cs0" type="checkbox" checked>CORESET0/SIB1</label>
   <label title="also draw the CORESET0 occasions where nothing was sent (faint)"><input id="ov_cs0i" type="checkbox" checked>idle CORESET0</label>
+  <label title="per-symbol view, zoomed in: REG bundles, CCE numbers (interleaved) and the DMRS positions inside CORESET0; bright = bundle carries PDCCH"><input id="ov_reg" type="checkbox" checked>REG/CCE/DMRS</label>
   <label><input id="ov_frm" type="checkbox" checked>SFN/slots</label>
   <label><input id="ov_const" type="checkbox" checked>PBCH constellation</label>
   <button id="pause">Pause</button>
@@ -410,6 +411,27 @@ function cs0Excess(s, a){
   if (!na || !nb) return NaN;
   return 10 * Math.log10(A / na) - 10 * Math.log10(B / nb);
 }
+// ---- CORESET0 geometry from the decoded MIB: TS 38.213 tables 13-1..13-4 (PRBs, symbols, offset) and 13-11 (first symbol), same values as srsran phy_common_nr.c
+// [nprb, nsym, offset_rb]; the offset is counted from the lowest RB of CORESET0 up to the RB that contains the first SSB subcarrier
+var CS0_TAB = {
+  '15/15': [[24,2,0],[24,2,2],[24,2,4],[24,3,0],[24,3,2],[24,3,4],[48,1,12],[48,1,16],[48,2,12],[48,2,16],[48,3,12],[48,3,16],[96,1,38],[96,2,38],[96,3,38],null],
+  '15/30': [[24,2,5],[24,2,6],[24,2,7],[24,2,8],[24,3,5],[24,3,6],[24,3,7],[24,3,8],[48,1,18],[48,1,20],[48,2,18],[48,2,20],[48,3,18],[48,3,20],null,null],
+  '30/15': [[48,1,2],[48,1,6],[48,2,2],[48,2,6],[48,3,2],[48,3,6],[96,1,28],[96,2,28],[96,3,28],null,null,null,null,null,null,null],
+  '30/30': [[24,2,0],[24,2,1],[24,2,2],[24,2,3],[24,2,4],[24,3,0],[24,3,1],[24,3,2],[24,3,3],[24,3,4],[48,1,12],[48,1,14],[48,1,16],[48,2,12],[48,2,14],[48,2,16]]
+};
+// table 13-11 (FR1, multiplexing pattern 1): [O, sets per slot, M, first symbol]; with 2 sets the first symbol is 0 for even SSB index and nsym for odd
+var CS0_SS0 = [[0,1,1,0],[0,2,.5,0],[2,1,1,0],[2,2,.5,0],[5,1,1,0],[5,2,.5,0],[7,1,1,0],[7,2,.5,0],[0,1,2,0],[5,1,2,0],[0,1,1,1],[0,1,1,2],[2,1,1,1],[2,1,1,2],[5,1,1,1],[5,1,1,2]];
+var cs0Sig = '';
+function cs0FromMib(){
+  var c0 = meta.coreset0, mb = null, i; if (!c0 || !meta.ssb) return;
+  for (i = sibQ.length - 1; i >= 0; i--) if (sibQ[i].mib) { mb = sibQ[i].mib; break; }
+  if (!mb) return;
+  var sscs = meta.ssb_scs_khz || meta.scs_khz || 30, key = sscs + '/' + mb.scs, tab = CS0_TAB[key], e = tab && tab[mb.cs0], r = CS0_SS0[mb.ss0];
+  if (!e || !r || sscs !== mb.scs || (meta.scs_khz && meta.scs_khz !== mb.scs)) return;      // other SCS combinations: keep what the meta file says
+  var sig = key + '/' + mb.cs0 + '/' + mb.ss0 + '/' + (mb.ssb & 1); if (sig === cs0Sig) return; cs0Sig = sig;
+  c0.prb_lo = meta.ssb.prb_lo - e[2]; c0.prb_hi = c0.prb_lo + e[0]; c0.nsym = e[1];
+  c0.sym_start = (r[1] === 2 && (mb.ssb & 1)) ? e[1] : r[3]; c0.derived = true;
+}
 // median distance (in 10 ms frames) between frames that contain an active CORESET0 occasion, over the whole history
 function cs0Period(s, sh){
   var spf = meta.slots_per_frame || 20, fr = [], last = -1e9, lo = Math.max(0, s.newest - R + 2 * spf), i;
@@ -448,6 +470,7 @@ function draw(){
   var left = vNewest - W + 1;
   if (!serverAlign && !paused && performance.now() - lastCal > 2000) { lastCal = performance.now(); calibrate(s); }
   var sh = serverAlign ? 0 : calShift;
+  cs0FromMib();
   if (meta.coreset0 && (paused && snap ? cs0Snap !== snap : performance.now() - cs0At > 1000)) { cs0At = performance.now(); cs0Snap = snap; cs0PerTxt = cs0Period(s, sh); }
   var useSym = symOn && s.sym, iw = useSym ? W * S : W;
   if (!img || img.width !== iw || img.height !== NP) {
@@ -483,12 +506,55 @@ function draw(){
   function X(abs){ return G.px + (abs - left) * cw; }
   function Y(prb){ return G.py + G.ph - (prb - LO + 1) * rh; }        // top edge of PRB row
   function Yb(prb){ return G.py + G.ph - (prb - LO) * rh; }           // bottom edge
+  // REG bundles / CCEs / DMRS inside one CORESET0 occasion (slot a, left edge x0, slot width cw); per-symbol view only.
+  // REG = 1 PRB x 1 symbol (12 RE). Bundle = 6 REGs = 1 CCE (CORESET0: bundle size 6). Interleaver R = 2, shift = PCI (38.211 7.3.2.2):
+  // bundle f(j) = (r*C + c + shift) mod nB with j = 2c + r, C = nB/2; CCE i occupies bundle f(i). REGs are numbered time first.
+  function cs0Detail(a, x0){
+    var c0 = meta.coreset0, ns = c0.nsym || 1, npr = c0.prb_hi - c0.prb_lo, sw = cw / S, sy0 = c0.sym_start || 0, bw = 6 / ns, nB = npr * ns / 6;
+    if (bw !== Math.floor(bw) || nB !== Math.floor(nB) || nB % 2 || sw < 6 || rh < 5 || !s.sym) return;
+    var col = ((a % R) + R) % R, ok = s.abs[col] === a && s.symOk[col], C = nB / 2, cceOf = [], i, b, p, y, k, pw = [], ref = 0, nref = 0, mn = 1e9;
+    for (i = 0; i < nB; i++) cceOf[(((i & 1) * C) + (i >> 1) + (meta.pci || 0)) % nB] = i;
+    if (ok) {
+      for (b = 0; b < nB; b++) {                                    // mean power of each bundle (linear), then dB
+        var acc = 0, cnt = 0, q;
+        for (p = c0.prb_lo + b * bw; p < c0.prb_lo + (b + 1) * bw; p++) for (y = sy0; y < sy0 + ns; y++) { q = s.sym[(col * S + y) * NP + (p - LO)]; if (q) { acc += Math.pow(10, qToDb(q) / 10); cnt++; } }
+        pw[b] = cnt ? 10 * Math.log10(acc / cnt) : NaN; if (pw[b] < mn) mn = pw[b];
+      }
+      for (p = 0; p < NP; p++) if (p + LO < c0.prb_lo || p + LO >= c0.prb_hi) for (y = sy0; y < sy0 + ns; y++) { var q2 = s.sym[(col * S + y) * NP + p]; if (q2) { ref += Math.pow(10, qToDb(q2) / 10); nref++; } }
+      ref = nref >= 8 ? 10 * Math.log10(ref / nref) : mn;           // PRBs next to CORESET0 in the same symbols, else the quietest bundle
+    }
+    var xL = x0 + sw * sy0, wB = sw * ns, act = [];
+    ctx.save(); ctx.font = '9px system-ui'; ctx.textAlign = 'left';
+    for (b = 0; b < nB; b++) {
+      var on = ok && pw[b] > ref + CS0_THR, yT = Y(c0.prb_lo + (b + 1) * bw - 1), hB = bw * rh;
+      if (on) act.push(cceOf[b]);
+      if (on) { ctx.fillStyle = 'rgba(0,229,255,0.16)'; ctx.fillRect(xL, yT, wB, hB); }
+      ctx.strokeStyle = on ? '#00e5ff' : 'rgba(0,229,255,0.4)'; ctx.lineWidth = on ? 1.5 : 1; ctx.strokeRect(xL + 0.5, yT + 0.5, wB - 1, hB - 1);
+      if (wB >= 16 && hB >= 11) { ctx.fillStyle = on ? '#fff' : 'rgba(180,240,255,0.75)'; ctx.fillText((wB >= 36 ? 'CCE ' : 'C') + cceOf[b], xL + 2, yT + 10); }
+      if (rh >= 14 && sw >= 8) {                                    // REG cell lines + DMRS (RE 1, 5, 9 of every REG), only when zoomed in enough
+        ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1;
+        for (p = 1; p < bw; p++) { y = Math.round(yT + p * rh) + 0.5; ctx.beginPath(); ctx.moveTo(xL, y); ctx.lineTo(xL + wB, y); ctx.stroke(); }
+        for (var l = 1; l < ns; l++) { var xx = Math.round(xL + l * sw) + 0.5; ctx.beginPath(); ctx.moveTo(xx, yT); ctx.lineTo(xx, yT + hB); ctx.stroke(); }
+        if (rh >= 18) {
+          ctx.fillStyle = on ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.45)';
+          for (p = c0.prb_lo + b * bw; p < c0.prb_lo + (b + 1) * bw; p++) for (y = 0; y < ns; y++) for (k = 1; k < 12; k += 4) ctx.fillRect(Math.round(xL + (y + 0.5) * sw - 1), Math.round(Yb(p) - (k + 0.5) * rh / 12 - 1), 2, 2);
+        }
+      }
+    }
+    if (act.length) {
+      act.sort(function(u, v){ return u - v; });
+      var contig = act[act.length - 1] - act[0] + 1 === act.length;
+      ctx.font = 'bold 10px system-ui'; ctx.fillStyle = '#00e5ff';
+      ctx.fillText('PDCCH ' + (contig ? 'CCE ' + act[0] + (act.length > 1 ? '–' + act[act.length - 1] : '') : 'CCE ' + act.join(',')) + ' · AL ' + act.length, xL, Y(c0.prb_hi - 1) - 16);
+    }
+    ctx.restore();
+  }
   // callout above the SSB block with the decoded MIB (latest PBCH frame that passed CRC)
   function mibCallout(x, y){
     var mb = null;
     for (var i = sibQ.length - 1; i >= 0; i--) if (sibQ[i].mib) { mb = sibQ[i].mib; break; }
     if (!mb) return;
-    var t = 'MIB: CORESET0 idx ' + mb.cs0 + ' \u00b7 SS0 idx ' + mb.ss0 + ' \u00b7 SCS ' + mb.scs + ' kHz' + (mb.barred ? ' \u00b7 CELL BARRED' : '');
+    var t = 'MIB: CORESET0 idx ' + mb.cs0 + ' \u00b7 SS0 idx ' + mb.ss0 + ' \u00b7 SCS ' + mb.scs + ' kHz' + (meta.coreset0 && meta.coreset0.derived ? ' (' + (meta.coreset0.prb_hi - meta.coreset0.prb_lo) + ' PRB × ' + meta.coreset0.nsym + ' sym)' : '') + (mb.barred ? ' \u00b7 CELL BARRED' : '');
     ctx.save(); ctx.font = 'bold 10px system-ui';
     var w = ctx.measureText(t).width + 8, yy = Math.max(G.py + 12, y), rl = G.px + G.pw - 2;
     if (iqOn && $('ov_const').checked && yy - 11 < G.py + 8 + 276) rl = G.px + G.pw - 258 - 4;      // stay left of the constellation panel
@@ -571,6 +637,7 @@ function draw(){
       var cs0 = useSym && meta.coreset0.sym_start != null, cx0 = cs0 ? x0 + cw * meta.coreset0.sym_start / S : x0, cwid = cs0 ? cw * (meta.coreset0.nsym || 1) / S : cw;
       ctx.strokeRect(cx0 + 0.5, Y(meta.coreset0.prb_hi - 1), Math.max(cwid - 1, 1), (meta.coreset0.prb_hi - meta.coreset0.prb_lo) * rh);
       ctx.setLineDash([]);
+      if (useSym && cs0 && $('ov_reg').checked && meta.coreset0.derived) cs0Detail(a, x0);
       if (cact) {
         ctx.fillStyle = 'rgba(0,229,255,0.12)'; ctx.fillRect(cx0 + 0.5, Y(meta.coreset0.prb_hi - 1), Math.max(cwid - 1, 1), (meta.coreset0.prb_hi - meta.coreset0.prb_lo) * rh);
         if (cwid >= 90 && !meta.coreset0.beams) { ctx.fillStyle = '#00e5ff'; ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'left'; ctx.fillText('CORESET0 active (+' + cex.toFixed(0) + ' dB)', cx0 + 2, Y(meta.coreset0.prb_hi - 1) - 4); ctx.font = '9px system-ui'; }

@@ -86,6 +86,19 @@ Current testbed: gNB PCI 1, SSB at 3483.84 MHz (ARFCN 632256, GSCN 7835), 30 kHz
   where SIB1 cannot be decoded. EVM is much worse than the SIB1 PDSCH EVM was on the strong lab gNB (about 35-45 % on the weak
   commercial n41 cell) because PBCH is heavily coded and still decodes at low SNR: judge the cell by the cluster shape and CRC, not by EVM alone.
 
+### CORESET0 in detail: REGs, CCEs and DMRS
+
+Tick **REG/CCE/DMRS** (per-symbol view, window of about 10 slots or less) to see what is inside the CORESET0 box of an occasion:
+
+* **Geometry from the MIB.** The box is no longer taken from the meta file: the viewer reads the decoded MIB (CORESET0 index, SS0 index, SSB index) and looks up TS 38.213 tables 13-1..13-4 (PRBs, symbols, offset from the SSB) and 13-11 (first symbol), the same tables as `phy_common_nr.c`.
+  The MIB callout shows the result, e.g. `CORESET0 idx 0 ... (24 PRB x 2 sym)`. Only the SCS combinations 15/15, 15/30, 30/15 and 30/30 kHz (SSB/PDCCH) are covered; for others the meta file is used. The occasion slots still come from the meta file.
+* **REG** = 1 PRB x 1 symbol (12 REs), i.e. one cell of the per-symbol grid. Faint lines separate REGs when zoomed in far enough.
+* **CCE** = 1 REG bundle = 6 REGs (CORESET0 uses bundle size 6, interleaver size 2, shift = PCI; TS 38.211 7.3.2.2). REGs are numbered time first, so on the testbed (24 PRB x 2 symbols) a bundle is 3 PRBs x 2 symbols.
+  Bundle `b` carries CCE `i` with `b = (r*C + c + PCI) mod nB`, `i = 2c + r`, `C = nB/2`. The label `C<i>` in every bundle is that CCE number.
+* **Active CCEs.** A bundle is drawn bright when its mean power is more than 8 dB above the PRBs next to CORESET0 in the same symbols; the label above the box then reads e.g. `PDCCH CCE 0-3 - AL 4`.
+  On the testbed this matches the SIB1 DCI exactly: PRBs 3-8 and 15-20 of symbols 0-1, which is CCEs 0-3 (aggregation level 4).
+* **DMRS.** The dots are the PDCCH DMRS positions, subcarriers 1, 5 and 9 of every REG (25 % of the REs). They are drawn from the standard, not measured: the grid has one value per PRB, so real DMRS power would need a per-subcarrier tap in nrscope. Dots appear when a PRB row is at least 18 px high.
+
 ## Layout
 
 | path | content |
@@ -356,7 +369,7 @@ Measured on the n41 cell, gain 50 dB: nrscan 77 s + SIB1 21 s for 3 hits (one re
 
 * `nrscan` (tested on the n41 config: it sweeps GSCN 6246-6717 with 15 kHz and then 30 kHz SCS in about 2 minutes and finds GSCN 6624, 2649.75 MHz, PCI 610 and a repeat at GSCN 6627) ends with `terminate called without an active exception` (abort) after the sweep; `run/scan/scan.csv` is complete by then. `scan.sh` now waits 3 s after `stop.sh`; without it the first scan failed with `No devices found for type b200`.
 * `scripts/scan_plmn.py` (PLMN scan): nrscan finds the cells, then nrscope runs on each one until it has decoded SIB1 and the PLMN list, TAC and cell identity are read from its log. n41 test: nrscan sweep 93 s, SIB1 decode 3.5 s (11 s with start-up and shutdown), 103 s in total for one cell; result GSCN 6624, PCI 610, PLMNs 520-04 and 520-05, TAC 5106021, NCI 0x1FC110899. Every further cell adds about 10 s. The SCS of the nrscope pass is the one in the yaml (`scs_index`).
-* n41 meta: `config/meta_n41_pci610.json` draws CORESET0 40 PRBs wide (126-165) but nrscope's SIB1 DCI line says `coreset0_bw=48` (MIB CORESET0 idx 10). The box should be derived from the decoded MIB (idx, SS0 idx, SSB idx, k_SSB) instead of the static meta.
+* n41 meta: `config/meta_n41_pci610.json` draws CORESET0 40 PRBs wide (126-165) but nrscope's SIB1 DCI line says `coreset0_bw=48` (MIB CORESET0 idx 10). The viewer now derives the box from the decoded MIB (48 PRBs starting 12 PRBs below the SSB, i.e. 114-161); verified on the n78 testbed, not yet on the n41 cell.
 * n41: the power-based CORESET0 activity test (viewer legend, `cs0_interval.py`) finds nothing, although the decoder sees SIB1 every 20 ms per beam (`sib1_period.py`). Slot-average power and an 8-PRB window scan both failed to separate it from the cell traffic, or the PRBs in the meta are wrong (meta: 40 PRBs, decoder: 48). The legend is therefore wrong on n41; the viewer should take the SIB1 occasions from the `sib1c` decodes (or from the MIB) instead of power.
 * `scripts/cs0_interval.py` keeps the SFN parity of `cycle_slots` (n41); before this fix it counted the SSB slots as CORESET0 activity.
 
