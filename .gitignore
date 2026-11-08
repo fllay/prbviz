@@ -1,0 +1,10 @@
+build/
+run/
+old/
+__pycache__/
+*.pyc
+*.log
+*.csv
+*.pid
+*.bak*
+*.keep

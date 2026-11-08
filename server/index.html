@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>NR-Scope live PRB grid</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root{color-scheme:dark}
+  body{margin:0;background:#0f1419;color:#d7dde4;font:13px/1.35 system-ui,-apple-system,Segoe UI,sans-serif;overflow:hidden}
+  #bar{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;padding:8px 12px;background:#172029;border-bottom:1px solid #26323d}
+  #bar h1{font-size:14px;margin:0 8px 0 0;font-weight:600}
+  #bar label{display:flex;gap:5px;align-items:center;white-space:nowrap}
+  #bar input[type=number]{width:54px;background:#0f1419;color:#d7dde4;border:1px solid #33414e;border-radius:4px;padding:2px 4px}
+  #bar select,#bar button{background:#0f1419;color:#d7dde4;border:1px solid #33414e;border-radius:4px;padding:3px 8px}
+  #bar button{cursor:pointer}
+  #live{display:inline-block;width:9px;height:9px;border-radius:50%;background:#555;margin-right:5px}
+  #live.on{background:#3ddc84}
+  #stat{margin-left:auto;font-variant-numeric:tabular-nums;color:#9fb0bf}
+  #hover{position:fixed;bottom:6px;left:50px;color:#c9d6e2;font-variant-numeric:tabular-nums;pointer-events:none}
+  canvas{display:block}
+</style></head>
+<body>
+<div id="bar">
+  <h1><span id="live"></span>NR-Scope live PRB grid</h1>
+  <span id="cell"></span>
+  <label>window <select id="win">
+    <option value="4">4 slots (2 ms)</option><option value="10">10 slots (5 ms)</option><option value="20">20 slots (10 ms)</option>
+    <option value="40">40 slots (20 ms)</option><option value="100">100 slots (50 ms)</option><option value="200">200 slots (100 ms)</option>
+    <option value="400" selected>400 slots (200 ms)</option><option value="800">800 slots (400 ms)</option>
+    <option value="1600">1600 slots (800 ms)</option></select></label>
+  <label>view <select id="view"><option value="slot" selected>per slot (average)</option><option value="sym">per symbol</option></select></label>
+  <label>dB min <input id="dbmin" type="number" value="-15" step="1"></label>
+  <label>max <input id="dbmax" type="number" value="30" step="1"></label>
+  <label><input id="ov_tdd" type="checkbox" checked>TDD</label>
+  <label><input id="ov_ssb" type="checkbox" checked>SSB</label>
+  <label><input id="ov_cs0" type="checkbox" checked>CORESET0/SIB1</label>
+  <label><input id="ov_frm" type="checkbox" checked>SFN/slots</label>
+  <label><input id="ov_const" type="checkbox" checked>SIB1 constellation</label>
+  <button id="pause">Pause</button>
+  <span id="stat"></span>
+</div>
+<canvas id="cv"></canvas>
+<div id="hover"></div>
+<script>
+(function(){
+'use strict';
+var R = 4096;                       // ring size in slots
+var meta = {}, NP = 0, LO = 0;
+var ring = null, ringAbs = new Float64Array(R).fill(-1), gainRing = new Int16Array(R);
+var sibQ = [], iqOn = true;
+var S = 14, symOn = false, symRing = null, symOk = new Uint8Array(R);
+var newest = -1, W = 400, dbMin = -15, dbMax = 30;
+var paused = false, snap = null, es = null;
+var rxSlots = 0, missing = 0, rate = 0, lastGain = 0, lastRx = 0, lastMsgAt = 0;
+var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+var off = document.createElement('canvas'), offc = off.getContext('2d'), img = null;
+var G = null, lut = new Uint8ClampedArray(256 * 3);
+var mouse = null;
+
+var VIR = [[0,[68,1,84]],[.125,[71,44,122]],[.25,[59,81,139]],[.375,[44,113,142]],[.5,[33,144,141]],
+           [.625,[39,173,129]],[.75,[92,200,99]],[.875,[170,220,50]],[1,[253,231,37]]];
+function viridis(t){
+  t = Math.max(0, Math.min(1, t));
+  for (var i = 1; i < VIR.length; i++) if (t <= VIR[i][0]) {
+    var a = VIR[i-1], b = VIR[i], f = (t - a[0]) / (b[0] - a[0]);
+    return [a[1][0]+(b[1][0]-a[1][0])*f, a[1][1]+(b[1][1]-a[1][1])*f, a[1][2]+(b[1][2]-a[1][2])*f];
+  }
+  return VIR[VIR.length-1][1];
+}
+function qToDb(q){ return q / 1.8 - 100; }
+function buildLut(){
+  for (var q = 0; q < 256; q++) {
+    var c;
+    if (q === 0) c = [70, 70, 70];                    // missing slot
+    else c = viridis((qToDb(q) - dbMin) / (dbMax - dbMin));
+    lut[q*3] = c[0]; lut[q*3+1] = c[1]; lut[q*3+2] = c[2];
+  }
+}
+buildLut();
+
+function $(id){ return document.getElementById(id); }
+function b64(s){ var bin = atob(s), n = bin.length, u = new Uint8Array(n); for (var i = 0; i < n; i++) u[i] = bin.charCodeAt(i); return u; }
+
+// ---- data in
+function setMeta(m){ meta = m; if (m.name) $('cell').textContent = m.name + ' | PCI ' + m.pci + ' | ' + m.scs_khz + ' kHz SCS'; }
+if (!window.__DEMO) fetch('/meta').then(function(r){ return r.json(); }).then(setMeta).catch(function(){});
+
+function onMsg(m){
+  if (m.sib1) { m.sib1.at = performance.now() - (m.sib1.age || 0) * 1000; sibQ.push(m.sib1); if (sibQ.length > 8) sibQ.shift(); return; }
+  var u = b64(m.data);
+  if (m.align !== undefined) { serverAlign = true; serverShift = m.align; serverMode = m.amode || 'ssb'; }
+  if (m.np !== NP || !ring) { NP = m.np; LO = m.lo; ring = new Uint8Array(R * NP); ringAbs.fill(-1); img = null; symRing = null; symOk.fill(0); }
+  var su = null;
+  if (m.sym) { S = m.nsym || 14; su = b64(m.sym); if (!symRing || symRing.length !== R * S * NP) { symRing = new Uint8Array(R * S * NP); symOk.fill(0); } }
+  for (var i = 0; i < m.n; i++) {
+    var abs = m.slot0 + i, col = abs % R;
+    ring.set(u.subarray(i * NP, (i + 1) * NP), col * NP);
+    ringAbs[col] = abs; gainRing[col] = m.gain[i];
+    if (su) { symRing.set(su.subarray(i * S * NP, (i + 1) * S * NP), col * S * NP); symOk[col] = 1; } else symOk[col] = 0;
+  }
+  var last = m.slot0 + m.n - 1;
+  if (last > newest || last < newest - 20000) newest = last;
+  rxSlots += m.n; missing += m.miss; lastGain = m.gain[m.n - 1] / 10; lastMsgAt = performance.now();
+}
+if (window.__DEMO) {
+  setMeta(window.__META);
+  var di = 0, span = 0, loops = 0;
+  window.__DEMO.forEach(function(m){ span += m.n; }); span = Math.ceil(span / 20) * 20;
+  setInterval(function(){
+    var m = window.__DEMO[di], mm = Object.assign({}, m, { slot0: m.slot0 + loops * span });
+    onMsg(mm); di++; if (di >= window.__DEMO.length) { di = 0; loops++; }
+  }, 20);
+} else {
+  openStream();
+}
+function openStream(){
+  if (es) es.close();
+  var qs = (symOn ? 'sym=1&' : '') + (iqOn ? 'iq=1' : '');
+  es = new EventSource('/stream' + (qs ? '?' + qs : ''));
+  es.onmessage = function(e){ onMsg(JSON.parse(e.data)); };
+  es.onerror = function(){ $('live').className = ''; };
+}
+
+// ---- controls
+$('win').onchange = function(){ W = +this.value; };
+$('ov_const').onchange = function(){ iqOn = this.checked; if (!iqOn) sibQ = []; if (!window.__DEMO) openStream(); };
+$('view').onchange = function(){
+  symOn = this.value === 'sym';
+  if (symOn && W > 100) { W = 20; $('win').value = '20'; }
+  if (!symOn && W < 40) { W = 400; $('win').value = '400'; }
+  if (symOn) { for (var i = 0; i < R; i++) symOk[i] = 0; }
+  img = null;
+  if (!window.__DEMO) openStream();
+};
+$('dbmin').onchange = function(){ dbMin = +this.value; buildLut(); };
+$('dbmax').onchange = function(){ dbMax = +this.value; buildLut(); };
+$('pause').onclick = function(){
+  paused = !paused; this.textContent = paused ? 'Resume' : 'Pause';
+  if (paused && ring) snap = { ring: ring.slice(), abs: ringAbs.slice(), gain: gainRing.slice(), newest: newest, sym: symRing ? symRing.slice() : null, symOk: symOk.slice() };
+  else snap = null;
+};
+setInterval(function(){ rate = rxSlots - lastRx; lastRx = rxSlots; }, 1000);
+
+// ---- geometry
+function layout(){
+  var dpr = window.devicePixelRatio || 1, bar = $('bar').offsetHeight;
+  var w = window.innerWidth, h = window.innerHeight - bar;
+  cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  var px = 52, py = 56, pw = w - px - 78;
+  var th = 84, gap = 34, legend = 74;
+  var ph = Math.max(180, h - py - th - gap - legend - 8);
+  G = { w: w, h: h, px: px, py: py, pw: pw, ph: ph, ty: py + ph + gap, th: th, ly: h - 8 };
+}
+window.addEventListener('resize', layout); layout();
+new ResizeObserver(layout).observe($('bar'));
+
+cv.addEventListener('mousemove', function(e){ var r = cv.getBoundingClientRect(); mouse = { x: e.clientX - r.left, y: e.clientY - r.top }; });
+cv.addEventListener('mouseleave', function(){ mouse = null; $('hover').textContent = ''; });
+
+
+var calShift = 0, calOk = false, lastCal = 0, serverAlign = false, serverShift = 0, serverMode = 'ssb';
+// Auto slot alignment: the SSB is the only block present in EVERY frame where PRB 14-19 is far above PRB 27-36.
+// Use the 25th-percentile contrast per slot index (bursts that only occur in some frames score low), then shift labels
+// so the winning slot lands on meta.ssb.slot_idx[0].
+function calibrate(s){
+  var spf = meta.slots_per_frame || 20;
+  if (!s.ring || !NP || s.newest < 0 || !meta.ssb) return;
+  var lists = [], i;
+  for (i = 0; i < spf; i++) lists.push([]);
+  var lo = Math.max(0, s.newest - 2400);
+  for (var a = lo; a <= s.newest; a++) {
+    var col = ((a % R) + R) % R;
+    if (s.abs[col] !== a) continue;
+    var si = ((a % spf) + spf) % spf, A = 0, B = 0, na = 0, nb = 0;
+    for (var p = 0; p < NP; p++) {
+      var q = s.ring[col * NP + p]; if (!q) continue;
+      var v = Math.pow(10, qToDb(q) / 10), prb = LO + p;
+      if (prb >= 14 && prb <= 19) { A += v; na++; } else if (prb >= 27 && prb <= 36) { B += v; nb++; }
+    }
+    if (na && nb) lists[si].push(10 * Math.log10(A / na) - 10 * Math.log10(B / nb));
+  }
+  var best = -1, bs = -1e9, second = -1e9;
+  for (i = 0; i < spf; i++) {
+    var l = lists[i]; if (l.length < 25) return;
+    l.sort(function(x, y){ return x - y; });
+    var sc = l[Math.floor(l.length * 0.25)];
+    if (sc > bs) { second = bs; bs = sc; best = i; } else if (sc > second) second = sc;
+  }
+  if (bs > 6 && bs - second > 3) { calShift = (((meta.ssb.slot_idx[0] - best) % spf) + spf) % spf; calOk = true; }
+}
+
+// SSB symbol runs belonging to slot `a`. The previous, current and next slot are scanned as one continuous symbol timeline, because
+// nrscope's FFT window slides against the air signal, so the SSB can spill into the previous or the next slot.
+// Returns [start, length] relative to symbol 0 of slot `a` (negative = inside the previous slot, >= S = inside the next one).
+// A run belongs to slot `a` when it starts in symbols [-6, S): that keeps neighbouring SSB slots (n41 has four in a row) apart.
+var ssbRef = {};
+function ssbRuns(s, a){
+  if (!s.sym || !meta.ssb) return null;
+  var p0 = Math.max(0, meta.ssb.prb_lo - LO), p1 = Math.min(NP, meta.ssb.prb_hi - LO), prof = [], sy, p, mn = 1e9, k;
+  if (p1 <= p0) return null;
+  var first = -1, nslots = 0;
+  for (k = -1; k <= 1; k++) {
+    var col = (((a + k) % R) + R) % R, ok = s.abs[col] === a + k && s.symOk[col];
+    if (!ok) { if (k === 1) break; return null; }          // the next slot may simply not have arrived yet
+    nslots++;
+    for (sy = 0; sy < S; sy++) {
+      var acc = 0, base = (col * S + sy) * NP;
+      for (p = p0; p < p1; p++) acc += Math.pow(10, qToDb(s.sym[base + p]) / 10);
+      var v = 10 * Math.log10(acc / (p1 - p0) + 1e-12); prof.push(v); if (v < mn) mn = v;
+    }
+  }
+  var out = [], cur = null, nsy = meta.ssb.nsym || 4;
+  function flush(){
+    if (cur && cur[1] >= 3) {
+      var st = cur[0] - S, ln = cur[1], bi = out.length;
+      if (st >= -6 && st < S) {
+        if (ln === nsy) ssbRef[bi] = st;                      // unambiguous: remember where this SSB block starts
+        else if (ln > nsy) {                                  // one extra loud symbol at either end: keep the placement closest to the last clean one
+          var rf = ssbRef[bi] != null ? ssbRef[bi] : st + 1, best = st;
+          for (var o = 0; o <= ln - nsy; o++) if (Math.abs(st + o - rf) < Math.abs(best - rf)) best = st + o;
+          st = best; ln = nsy;
+        }
+        out.push([st, ln]);
+      }
+    }
+    cur = null;
+  }
+  for (sy = 0; sy < prof.length; sy++) {
+    if (prof[sy] > mn + 12) { if (cur) cur[1]++; else cur = [sy, 1]; } else flush();
+  }
+  flush();
+  return out;
+}
+
+// ---- draw
+function draw(){
+  requestAnimationFrame(draw);
+  var s = paused && snap ? snap : { ring: ring, abs: ringAbs, gain: gainRing, newest: newest, sym: symRing, symOk: symOk };
+  ctx.fillStyle = '#0f1419'; ctx.fillRect(0, 0, G.w, G.h);
+  var live = !paused && performance.now() - lastMsgAt < 1500;
+  $('live').className = live ? 'on' : '';
+  if (!s.ring || NP === 0 || s.newest < 0) {
+    ctx.fillStyle = '#7d8c99'; ctx.font = '14px system-ui';
+    ctx.fillText('waiting for data from nrscope (needs SIB1 decoded)...', G.px, G.py + 30);
+    return;
+  }
+  var left = s.newest - W + 1;
+  if (!serverAlign && !paused && performance.now() - lastCal > 2000) { lastCal = performance.now(); calibrate(s); }
+  var sh = serverAlign ? 0 : calShift;
+  var useSym = symOn && s.sym, iw = useSym ? W * S : W;
+  if (!img || img.width !== iw || img.height !== NP) {
+    off.width = iw; off.height = NP; img = offc.createImageData(iw, NP);
+  }
+  var d = img.data, meanDb = new Float32Array(W);
+  for (var j = 0; j < W; j++) {
+    var abs = left + j, col = ((abs % R) + R) % R, valid = s.abs[col] === abs, acc = 0, cnt = 0;
+    for (var p = 0; p < NP; p++) {
+      var q = valid ? s.ring[col * NP + p] : 0, o = ((NP - 1 - p) * W + j) * 4;
+      if (!useSym) { d[o] = lut[q*3]; d[o+1] = lut[q*3+1]; d[o+2] = lut[q*3+2]; d[o+3] = 255; }
+      if (q) { acc += Math.pow(10, qToDb(q) / 10); cnt++; }
+    }
+    meanDb[j] = cnt ? 10 * Math.log10(acc / cnt) : NaN;
+  }
+  if (useSym) {
+    for (var j3 = 0; j3 < W; j3++) {
+      var ab3 = left + j3, col3 = ((ab3 % R) + R) % R, ok3 = s.abs[col3] === ab3 && s.symOk[col3];
+      for (var sy = 0; sy < S; sy++) {
+        var base = (col3 * S + sy) * NP;
+        for (var p3 = 0; p3 < NP; p3++) {
+          var q3 = ok3 ? s.sym[base + p3] : 0, o3 = ((NP - 1 - p3) * iw + j3 * S + sy) * 4;
+          d[o3] = lut[q3*3]; d[o3+1] = lut[q3*3+1]; d[o3+2] = lut[q3*3+2]; d[o3+3] = 255;
+        }
+      }
+    }
+  }
+  offc.putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(off, 0, 0, iw, NP, G.px, G.py, G.pw, G.ph);
+
+  var cw = G.pw / W, rh = G.ph / NP;
+  function X(abs){ return G.px + (abs - left) * cw; }
+  function Y(prb){ return G.py + G.ph - (prb - LO + 1) * rh; }        // top edge of PRB row
+  function Yb(prb){ return G.py + G.ph - (prb - LO) * rh; }           // bottom edge
+
+  var spf = meta.slots_per_frame || 20;
+  var tddOn = $('ov_tdd').checked, ssbOn = $('ov_ssb').checked, csOn = $('ov_cs0').checked, frOn = $('ov_frm').checked;
+  var tdd = meta.tdd || { period_slots: 10, dl: 6, special: 1, ul: 3 };
+  function slotCh(si){ var t = si % tdd.period_slots; if (tdd.pattern) return tdd.pattern.charAt(t); return t < tdd.dl ? 'D' : (t < tdd.dl + tdd.special ? 'S' : 'U'); }
+
+  // TDD strip + slot numbers
+  ctx.font = '9px system-ui'; ctx.textAlign = 'center';
+  for (var k = 0; k < W; k++) {
+    var a = left + k, si = (((a + sh) % spf) + spf) % spf, ti = si % tdd.period_slots, tc = slotCh(si);
+    var x0 = X(a);
+    if (tddOn) {
+      ctx.fillStyle = tc === 'D' ? '#4c78a8' : (tc === 'S' ? '#f2b134' : '#59a14f');
+      ctx.fillRect(x0, G.py - 14, cw + 0.6, 12);
+      if (cw >= 13) { ctx.fillStyle = '#0b0f13'; ctx.fillText(si, x0 + cw / 2, G.py - 5); }
+      ctx.fillStyle = tc === 'D' ? '#4c78a8' : (tc === 'S' ? '#f2b134' : '#59a14f');
+      ctx.fillRect(x0, G.py - 28, cw + 0.6, 12);
+      if (cw >= 6) { ctx.fillStyle = '#0b0f13'; ctx.font = 'bold 10px system-ui'; ctx.fillText(slotCh(si), x0 + cw / 2, G.py - 19); ctx.font = '9px system-ui'; }
+    }
+    if (frOn && si === 0) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, G.py - 30); ctx.lineTo(x0, G.py + G.ph); ctx.stroke();
+      if (cw * spf >= 50) {
+        ctx.fillStyle = '#b9c7d4'; ctx.textAlign = 'left'; ctx.font = '10px system-ui';
+        ctx.fillText('SFN ' + (Math.floor((a + sh) / spf) % 1024), x0 + 3, G.py - 33); ctx.textAlign = 'center'; ctx.font = '9px system-ui';
+      }
+    }
+    // channel outlines at expected positions
+    if (ssbOn && meta.ssb && meta.ssb.slot_idx.indexOf(si) >= 0 && Math.floor((a + sh) / spf) % (meta.ssb.period_frames || 1) === 0) {
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
+      var blk = useSym && meta.ssb.blocks ? meta.ssb.blocks[String(si)] : null;
+      if (blk) {
+        var runs = ssbRuns(s, a);
+        var useRuns = runs && runs.length === blk.length;
+        for (var bi = 0; bi < blk.length; bi++) {
+          var bs0 = useRuns ? runs[bi][0] : blk[bi].s, bn0 = useRuns ? runs[bi][1] : (meta.ssb.nsym || 4);
+          var bx = x0 + cw * bs0 / S, bw = cw * bn0 / S;
+          ctx.strokeRect(bx + 0.5, Y(meta.ssb.prb_hi - 1), Math.max(bw - 1, 1), (meta.ssb.prb_hi - meta.ssb.prb_lo) * rh);
+          if (bw >= 16) { ctx.fillStyle = '#fff'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center'; ctx.fillText('SSB b' + blk[bi].b, bx + bw / 2, Y(meta.ssb.prb_hi - 1) - 4); ctx.font = '9px system-ui'; }
+        }
+      } else {
+      ctx.strokeRect(x0 + 0.5, Y(meta.ssb.prb_hi - 1), Math.max(cw - 1, 1), (meta.ssb.prb_hi - meta.ssb.prb_lo) * rh);
+      }
+      if (!blk && meta.ssb.beams && meta.ssb.beams[si] != null && cw >= 16) { ctx.fillStyle = '#fff'; ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'center'; ctx.fillText('b' + meta.ssb.beams[si], x0 + cw / 2, Y(meta.ssb.prb_hi - 1) + 12); ctx.font = '9px system-ui'; }
+    }
+    if (csOn && meta.coreset0 && (meta.coreset0.cycle_slots ? meta.coreset0.cycle_slots.indexOf(((((a + sh) % (2 * spf)) + 2 * spf) % (2 * spf))) >= 0 : (meta.coreset0.slot_idx.indexOf(si) >= 0 && Math.floor((a + sh) / spf) % (meta.coreset0.period_frames || 1) === 0))) {
+      ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 1; ctx.setLineDash([3, 2]);
+      var cs0 = useSym && meta.coreset0.sym_start != null, cx0 = cs0 ? x0 + cw * meta.coreset0.sym_start / S : x0, cwid = cs0 ? cw * (meta.coreset0.nsym || 1) / S : cw;
+      ctx.strokeRect(cx0 + 0.5, Y(meta.coreset0.prb_hi - 1), Math.max(cwid - 1, 1), (meta.coreset0.prb_hi - meta.coreset0.prb_lo) * rh);
+      ctx.setLineDash([]);
+      if (cs0 && meta.coreset0.beams) { var bk0 = meta.coreset0.beams[String(((a + sh) % (2 * spf) + 2 * spf) % (2 * spf))]; if (bk0 != null) { ctx.fillStyle = '#00e5ff'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'left'; ctx.fillText('CORESET0 b' + bk0, cx0 + 2, Y(meta.coreset0.prb_hi - 1) - 4); ctx.font = '9px system-ui'; } }
+      else if (meta.coreset0.beams && cw >= 16) { var bk = meta.coreset0.beams[String(((a + sh) % (2 * spf) + 2 * spf) % (2 * spf))]; if (bk != null) { ctx.fillStyle = '#00e5ff'; ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'center'; ctx.fillText('b' + bk, x0 + cw / 2, Y(meta.coreset0.prb_hi - 1) + 12); ctx.font = '9px system-ui'; } }
+    }
+  }
+  if (tddOn) { ctx.fillStyle = '#9fb0bf'; ctx.font = '9px system-ui'; ctx.textAlign = 'right'; ctx.fillText('D/S/U', G.px - 4, G.py - 19); ctx.fillText('slot', G.px - 4, G.py - 5); }
+  ctx.textAlign = 'left';
+
+  if (useSym) {
+    var swd = cw / S;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 1;
+    for (var k2 = 0; k2 <= W; k2++) { var xs = G.px + k2 * cw; ctx.beginPath(); ctx.moveTo(xs, G.py); ctx.lineTo(xs, G.py + G.ph + 6); ctx.stroke(); }
+    if (swd >= 9) {
+      ctx.fillStyle = '#9fb0bf'; ctx.font = '9px system-ui'; ctx.textAlign = 'center';
+      for (var k3 = 0; k3 < W; k3++) for (var y3 = 0; y3 < S; y3++) ctx.fillText(y3, G.px + k3 * cw + (y3 + 0.5) * swd, G.py + G.ph + 14);
+      ctx.textAlign = 'right'; ctx.fillText('symbol', G.px - 4, G.py + G.ph + 14);
+    }
+    ctx.restore();
+  }
+  // PRB axis + reference lines
+  ctx.fillStyle = '#9fb0bf'; ctx.font = '10px system-ui'; ctx.textAlign = 'right';
+  var step = NP > 60 ? 10 : 5;
+  for (var p2 = LO; p2 < LO + NP; p2++) if (p2 % step === 0) ctx.fillText(p2, G.px - 6, Yb(p2) - rh / 2 + 3);
+  ctx.save(); ctx.translate(12, G.py + G.ph / 2); ctx.rotate(-Math.PI / 2); ctx.textAlign = 'center'; ctx.fillText('carrier PRB', 0, 0); ctx.restore();
+  ctx.setLineDash([2, 3]); ctx.lineWidth = 1; ctx.textAlign = 'left';
+  if (meta.lo_prb != null) { var yy = Yb(meta.lo_prb); ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.beginPath(); ctx.moveTo(G.px, yy); ctx.lineTo(G.px + G.pw, yy); ctx.stroke(); ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.fillText('B210 LO', G.px + G.pw + 4, yy + 3); }
+  if (meta.carrier_center_prb != null) { var y2 = Yb(meta.carrier_center_prb); ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.beginPath(); ctx.moveTo(G.px, y2); ctx.lineTo(G.px + G.pw, y2); ctx.stroke(); ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.fillText('gNB centre', G.px + G.pw + 4, y2 + 3); }
+  ctx.setLineDash([]);
+
+  // colorbar
+  var cbx = G.px + G.pw + 52, cbw = 12;
+  for (var yb = 0; yb < G.ph; yb++) {
+    var t = 1 - yb / G.ph, c = viridis(t);
+    ctx.fillStyle = 'rgb(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ')'; ctx.fillRect(cbx, G.py + yb, cbw, 1.5);
+  }
+  ctx.fillStyle = '#9fb0bf'; ctx.textAlign = 'left';
+  for (var v = Math.ceil(dbMin / 10) * 10; v <= dbMax; v += 10) ctx.fillText(v, cbx + cbw + 3, G.py + G.ph * (1 - (v - dbMin) / (dbMax - dbMin)) + 3);
+  ctx.fillText('dB', cbx - 2, G.py - 6);
+
+  // wideband power trace
+  ctx.strokeStyle = '#26323d'; ctx.lineWidth = 1; ctx.strokeRect(G.px + 0.5, G.ty + 0.5, G.pw, G.th);
+  ctx.strokeStyle = '#6fb3ff'; ctx.lineWidth = 1; ctx.beginPath();
+  var started = false;
+  for (var j2 = 0; j2 < W; j2++) {
+    var vdb = meanDb[j2]; if (isNaN(vdb)) { started = false; continue; }
+    var yy2 = G.ty + G.th - Math.max(0, Math.min(1, (vdb - dbMin) / (dbMax - dbMin))) * G.th, xx = G.px + (j2 + 0.5) * cw;
+    if (!started) { ctx.moveTo(xx, yy2); started = true; } else ctx.lineTo(xx, yy2);
+  }
+  ctx.stroke();
+  ctx.fillStyle = '#9fb0bf'; ctx.font = '10px system-ui'; ctx.textAlign = 'left';
+  ctx.fillText('mean power over all PRBs (dB)', G.px + 4, G.ty + 11);
+  ctx.textAlign = 'right'; ctx.fillText('now', G.px + G.pw - 2, G.ty + G.th + 12);
+  ctx.textAlign = 'left'; ctx.fillText('-' + (W >= 400 ? (W * 0.5 / 1000).toFixed(1) + ' s' : (W * 0.5).toFixed(W >= 20 ? 0 : 1) + ' ms'), G.px, G.ty + G.th + 12);
+
+  // legend
+  var items = [['#4c78a8', 'DL slot'], ['#f2b134', 'special'], ['#59a14f', 'UL slot'], ['#fff', 'SSB'], ['#00e5ff', 'CORESET0 / SIB1']], lx = G.px;
+  ctx.font = '11px system-ui';
+  for (var i2 = 0; i2 < items.length; i2++) {
+    ctx.fillStyle = items[i2][0]; ctx.fillRect(lx, G.ly - 8, 14, 9); ctx.fillStyle = '#b9c7d4'; ctx.fillText(items[i2][1], lx + 19, G.ly);
+    lx += 19 + ctx.measureText(items[i2][1]).width + 18;
+  }
+
+  var pat = [], sd = tdd.special_dl_symbols != null ? tdd.special_dl_symbols : 8, su = tdd.special_ul_symbols || 0;
+  for (var pi = 0; pi < tdd.period_slots; pi++) pat.push(slotCh(pi));
+  var pms = tdd.period_slots * 15 / (meta.scs_khz || 30);
+  ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 12px ui-monospace, Menlo, monospace'; ctx.textAlign = 'left';
+  var ptxt = 'Slot format: ' + pat.join(' ');
+  ctx.fillText(ptxt, G.px, G.ly - 34);
+  if (meta.beam_note) { ctx.fillStyle = '#9fb0bf'; ctx.font = '11px system-ui'; ctx.textAlign = 'left'; ctx.fillText(meta.beam_note, G.px, G.ly - 51); ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 12px ui-monospace, Menlo, monospace'; }
+  ctx.fillStyle = '#9fb0bf'; ctx.font = '11px system-ui';
+  ctx.fillText('period ' + pms + ' ms (' + tdd.period_slots + ' slots @ ' + (meta.scs_khz || 30) + ' kHz)  \u00b7  D downlink  \u00b7  U uplink  \u00b7  S special = ' + sd + ' DL + ' + (14 - sd - su) + ' flex + ' + su + ' UL symbols', G.px, G.ly - 19);
+
+  // SIB1 PDSCH constellation (equalised symbols from nrscope's SIB1 decoder; newest frames brightest)
+  if (iqOn && $('ov_const').checked) {
+    var cs = 170, cwid = cs + 20, chgt = cs + 62, cx0 = G.px + G.pw - cwid - 8, cy0 = G.py + 8;
+    ctx.fillStyle = 'rgba(15,20,25,0.88)'; ctx.fillRect(cx0, cy0, cwid, chgt);
+    ctx.strokeStyle = '#33414e'; ctx.lineWidth = 1; ctx.strokeRect(cx0 + 0.5, cy0 + 0.5, cwid, chgt);
+    var lastS = sibQ.length ? sibQ[sibQ.length - 1] : null;
+    var bx0 = cx0 + 10, by0 = cy0 + 34, half = cs / 2, rng = 1.6;
+    ctx.strokeStyle = '#26323d'; ctx.strokeRect(bx0 + 0.5, by0 + 0.5, cs, cs);
+    ctx.beginPath(); ctx.moveTo(bx0, by0 + half); ctx.lineTo(bx0 + cs, by0 + half); ctx.moveTo(bx0 + half, by0); ctx.lineTo(bx0 + half, by0 + cs); ctx.stroke();
+    if (!lastS || lastS.mod === 2) {                                       // ideal QPSK points
+      ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+      [-1, 1].forEach(function(ix){ [-1, 1].forEach(function(iy){ ctx.beginPath(); ctx.arc(bx0 + half + ix * 0.7071 * half / rng, by0 + half - iy * 0.7071 * half / rng, 4, 0, 6.2832); ctx.stroke(); }); });
+    }
+    for (var qi = 0; qi < sibQ.length; qi++) {
+      var pts = sibQ[qi].pts, al = 0.15 + 0.6 * (qi + 1) / sibQ.length;
+      ctx.fillStyle = sibQ[qi].crc ? '#7bdc7b' : '#ffb74d'; ctx.globalAlpha = al;
+      for (var pk = 0; pk < pts.length; pk++) {
+        var px2 = bx0 + half + pts[pk][0] * half / rng, py2 = by0 + half - pts[pk][1] * half / rng;
+        if (px2 > bx0 && px2 < bx0 + cs && py2 > by0 && py2 < by0 + cs) ctx.fillRect(px2 - 1, py2 - 1, 2.4, 2.4);
+      }
+      ctx.globalAlpha = 1;
+    }
+    ctx.textAlign = 'left'; ctx.font = 'bold 11px system-ui'; ctx.fillStyle = '#e6edf3';
+    var modName = lastS ? ({1: 'BPSK', 2: 'QPSK', 4: '16QAM', 6: '64QAM', 8: '256QAM'}[lastS.mod] || ('mod ' + lastS.mod)) : '';
+    ctx.fillText('SIB1 PDSCH' + (lastS ? '  ' + modName + '  CRC ' + (lastS.crc ? 'OK' : 'KO') : ''), cx0 + 10, cy0 + 15);
+    ctx.font = '10px system-ui'; ctx.fillStyle = '#9fb0bf';
+    ctx.fillText(lastS ? (lastS.evm != null ? 'EVM ' + lastS.evm.toFixed(0) + '%   ' : '') + lastS.n + ' symbols  \u00b7  SFN ' + lastS.sfn + ' slot ' + lastS.slot + '  \u00b7  ' + ((performance.now() - lastS.at) / 1000).toFixed(0) + ' s ago' : 'waiting for a SIB1 PDCCH/PDSCH decode...', cx0 + 10, cy0 + 28);
+    ctx.fillText('green = CRC OK, orange = CRC failed', cx0 + 10, cy0 + chgt - 6);
+    ctx.textAlign = 'left';
+  }
+
+  // status + hover
+  var nsa = s.newest + sh, sfn = Math.floor(nsa / spf) % 1024;
+  $('stat').textContent = 'SFN ' + sfn + ' slot ' + (nsa % spf) + (serverAlign ? '  |  slot align ' + (serverShift > 0 ? '+' : '') + serverShift + ' (server, ' + (serverMode === 'ul' ? 'UL slot' : serverMode === 'none' ? 'none' : 'SSB') + ')' : calOk ? '  |  slot align ' + (sh > 0 ? '+' : '') + sh + ' (auto, SSB)' : '  |  aligning...') + '  |  gain ' + lastGain.toFixed(1) + ' dB  |  ' + rate + ' slots/s  |  missing ' + missing + (symOn ? (s.sym ? '  |  symbol view' : '  |  symbol view: waiting') : '') + (paused ? '  |  PAUSED' : '');
+  if (mouse && mouse.x >= G.px && mouse.x < G.px + G.pw && mouse.y >= G.py && mouse.y < G.py + G.ph) {
+    var jj = Math.floor((mouse.x - G.px) / cw), hsym = useSym ? Math.floor(((mouse.x - G.px) / cw - jj) * S) : -1, pr = LO + Math.floor((G.py + G.ph - mouse.y) / rh), ab = left + jj, cl = ((ab % R) + R) % R, ab2 = ab + sh;
+    var ok = s.abs[cl] === ab, qv = ok ? (useSym ? (s.symOk[cl] ? s.sym[(cl * S + hsym) * NP + (pr - LO)] : 0) : s.ring[cl * NP + (pr - LO)]) : 0;
+    $('hover').textContent = 'SFN ' + (Math.floor(ab2 / spf) % 1024) + '  slot ' + (((ab2 % spf) + spf) % spf) + ' (' + slotCh(((ab2 % spf) + spf) % spf) + ')' + (useSym ? '  symbol ' + hsym : '') + '  PRB ' + pr + '  ' + (qv ? qToDb(qv).toFixed(1) + ' dB' : 'no data') + '  gain ' + (ok ? (s.gain[cl] / 10).toFixed(1) : '-') + ' dB';
+  } else $('hover').textContent = '';
+}
+requestAnimationFrame(draw);
+})();
+</script>
+</body></html>

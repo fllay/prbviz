@@ -1,0 +1,1 @@
+MIB: sfn=190 ssb_idx=0 hrf=n scs=30 ssb_offset=16 dmrs_typeA_pos=pos2 coreset0=10 ss0=9 barred=n intra_freq_reselection=y spare=1

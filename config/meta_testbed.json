@@ -1,0 +1,15 @@
+{
+  "name": "srsRAN testbed, n78",
+  "pci": 1,
+  "scs_khz": 30,
+  "slots_per_frame": 20,
+  "carrier_prbs": 51,
+  "center_mhz": 3489.42,
+  "ssb_mhz": 3483.84,
+  "lo_prb": 10,
+  "carrier_center_prb": 25.5,
+  "ssb": {"slot_idx": [0], "prb_lo": 0, "prb_hi": 20, "period_frames": 1},
+  "coreset0": {"slot_idx": [1], "prb_lo": 0, "prb_hi": 24},
+  "sib1_pdsch": {"prb_lo": 0, "prb_hi": 10},
+  "tdd": {"period_slots": 10, "dl": 6, "special": 1, "ul": 3, "special_dl_symbols": 8}
+}
