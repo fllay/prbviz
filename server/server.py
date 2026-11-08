@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PRB grid server: per-slot rows from nrscope (ZeroMQ SUB, or legacy UDP) -> reorder by absolute slot -> SSE + static page."""
-import argparse, base64, json, math, os, queue, socket, struct, subprocess, threading, time
+import argparse, base64, json, math, os, queue, re, socket, struct, subprocess, threading, time
 from urllib.parse import urlparse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
@@ -24,6 +24,71 @@ def current_cell():
             return f.read().strip()
     except OSError:
         return ''
+
+
+def current_name():
+    try:
+        with open(os.path.join(ROOT, 'run', 'cell.name')) as f:
+            return f.read().strip()
+    except OSError:
+        return ''
+
+
+def load_bands():
+    try:
+        with open(os.path.join(ROOT, 'config', 'bands.json')) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return []
+
+
+SCAN_DIR = os.path.join(ROOT, 'run', 'scan')
+JOB = os.path.join(SCAN_DIR, 'job.json')
+
+
+def switching():
+    sw = os.path.join(ROOT, 'run', 'switching')
+    return os.path.exists(sw) and time.time() - os.path.getmtime(sw) < 120
+
+
+def scan_status():
+    """job.json written by scripts/scan_plmn.py; a 'running' job whose process is gone is reported as an error."""
+    try:
+        with open(JOB) as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        return dict(state='none')
+    if st.get('state') == 'running':
+        alive = False
+        try:
+            os.kill(int(st.get('pid', 0)), 0)
+            alive = True
+        except (OSError, ValueError, TypeError):
+            pass
+        if not alive and time.time() - st.get('updated', 0) > 3:
+            st['state'] = 'error'
+            st['error'] = st.get('error') or 'scan process ended unexpectedly'
+    return st
+
+
+def make_cell_files(st, r):
+    """Config + minimal meta for a cell found by the scan (run/auto/<id>/); the viewer then runs without the lab-specific overlays."""
+    cid = 'scan_g%d_p%d' % (r['gscn'], r['pci'])
+    d = os.path.join(ROOT, 'run', 'auto', cid)
+    os.makedirs(d, exist_ok=True)
+    y = open(os.path.join(ROOT, 'config', 'scan_template.yaml')).read()
+    for key, val in (('ssb_freq', r['freq_hz']), ('pci', r['pci']), ('scs_index', {15: 0, 30: 1, 60: 2}.get(r['scs_khz'], 1)), ('rx_gain', '%g' % st.get('gain', 50))):
+        y, n = re.subn(r'(?m)^(\s*%s:\s*)[0-9.]+' % key, lambda m: m.group(1) + str(val), y, count=1)
+        assert n == 1, key
+    y = re.sub(r'(?m)^(\s*band_list:\s*)\[[^\]]*\]', lambda m: m.group(1) + '[%d]' % st.get('band', 0), y)
+    with open(os.path.join(d, 'config.yaml'), 'w') as f:
+        f.write(y)
+    name = 'n%s scan: PCI %d, %.2f MHz%s' % (st.get('band', '?'), r['pci'], r['freq_hz'] / 1e6, (', PLMN ' + ' '.join(r['plmn'])) if r.get('plmn') else '')
+    meta = dict(name=name, pci=r['pci'], scs_khz=r['scs_khz'], slots_per_frame=10 * r['scs_khz'] // 15, center_mhz=r['freq_hz'] / 1e6,
+                align=dict(mode='none'), plmn=r.get('plmn'), tac=r.get('tac'), nci=r.get('nci'), scanned=True)
+    with open(os.path.join(d, 'meta.json'), 'w') as f:
+        json.dump(meta, f, indent=1)
+    return cid, name, os.path.join(d, 'config.yaml'), os.path.join(d, 'meta.json')
 
 
 try:
@@ -495,10 +560,14 @@ def make_handler(hub, meta_path):
                 self._send(200, 'application/json', body)
             elif p == '/cells':
                 cs = load_cells()
-                sw = os.path.join(ROOT, 'run', 'switching')
                 self._send(200, 'application/json', json.dumps(dict(
                     cells=[dict(id=c['id'], name=c.get('name', c['id']), band=c.get('band', '')) for c in cs],
-                    current=current_cell(), switching=os.path.exists(sw) and time.time() - os.path.getmtime(sw) < 120)).encode())
+                    current=current_cell(), current_name=current_name(), switching=switching(),
+                    scanning=scan_status().get('state') == 'running')).encode())
+            elif p == '/bands':
+                self._send(200, 'application/json', json.dumps(load_bands()).encode())
+            elif p == '/scan/status':
+                self._send(200, 'application/json', json.dumps(scan_status()).encode())
             elif p == '/stats':
                 st = dict(hub.stat)
                 st['clients'] = len(hub.clients)
@@ -545,28 +614,82 @@ def make_handler(hub, meta_path):
                         hub.iq_clients = sum(1 for x in hub.clients if getattr(x, 'iq', False))
             else:
                 self._send(404, 'text/plain', b'not found')
+        def _json_body(self):
+            try:
+                return json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+            except ValueError:
+                return {}
+
+        def _jsend(self, code, obj):
+            self._send(code, 'application/json', json.dumps(obj).encode())
+
         def do_POST(self):
-            # restart nrscope + server on another cell of config/cells.json (only ids from that file; same-origin only)
-            if self.path.split('?')[0] != '/select':
+            # all POSTs: same-origin only; ids and numbers are validated against config files / the stored scan result, never used as paths or shell text
+            path = self.path.split('?')[0]
+            if path not in ('/select', '/scan', '/scan/cancel', '/view'):
                 return self._send(404, 'text/plain', b'not found')
             org = self.headers.get('Origin')
             if org and urlparse(org).netloc != self.headers.get('Host'):
-                return self._send(403, 'application/json', b'{"error":"cross-origin"}')
-            try:
-                body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
-            except ValueError:
-                body = {}
+                return self._jsend(403, dict(error='cross-origin'))
+            body = self._json_body()
+            running = scan_status().get('state') == 'running'
+            if path == '/scan/cancel':
+                st = scan_status()
+                if st.get('state') == 'running':
+                    try:
+                        os.killpg(os.getpgid(int(st['pid'])), 15)
+                    except (OSError, ValueError, KeyError):
+                        pass
+                    subprocess.run(['pkill', '-f', os.path.join(ROOT, 'build/nrscope/src/nrscan')])
+                    subprocess.run(['pkill', '-f', os.path.join(ROOT, 'build/nrscope/src/nrscope')])
+                    st['state'] = 'cancelled'
+                    st['updated'] = time.time()
+                    with open(JOB, 'w') as f:
+                        json.dump(st, f)
+                return self._jsend(200, dict(ok=True))
+            if switching() or running:
+                return self._jsend(409, dict(error='a scan is running' if running else 'a switch is already running'))
+            if path == '/scan':
+                band = body.get('band')
+                if band not in [b['band'] for b in load_bands()]:
+                    return self._jsend(400, dict(error='unknown band'))
+                try:
+                    gain = float(body.get('gain', 50))
+                except (TypeError, ValueError):
+                    gain = -1
+                if not 0 <= gain <= 76:
+                    return self._jsend(400, dict(error='gain must be 0..76 dB'))
+                os.makedirs(SCAN_DIR, exist_ok=True)
+                with open(JOB, 'w') as f:
+                    json.dump(dict(state='running', pid=0, band=band, gain=gain, phase='starting', started=time.time(), updated=time.time(), results=[]), f)
+                log = open(os.path.join(SCAN_DIR, 'job.log'), 'wb')
+                pr = subprocess.Popen([os.path.join(ROOT, 'scripts', 'scan_plmn.py'), os.path.join(ROOT, 'config', 'scan_template.yaml'), '--band', str(band),
+                                       '--gain', '%g' % gain, '--json', JOB, '--keep-server'],
+                                      stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+                with open(JOB) as f:                      # give the poller a live pid right away
+                    st = json.load(f)
+                st['pid'] = pr.pid
+                with open(JOB, 'w') as f:
+                    json.dump(st, f)
+                return self._jsend(202, dict(ok=True, scanning=band))
+            if path == '/view':
+                st = scan_status()
+                r = next((x for x in st.get('results', []) if x.get('gscn') == body.get('gscn') and x.get('pci') == body.get('pci')), None)
+                if st.get('state') != 'done' or r is None:
+                    return self._jsend(400, dict(error='no such cell in the last scan'))
+                cid, name, cfg, meta = make_cell_files(st, r)
+                log = open(os.path.join(ROOT, 'run', 'switch.log'), 'ab')
+                subprocess.Popen([os.path.join(ROOT, 'scripts', 'switch.sh'), '--custom', cid, cfg, meta, name], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+                return self._jsend(202, dict(ok=True, switching=cid))
+            # /select: restart nrscope + server on another cell of config/cells.json
             cid = body.get('id')
             if cid not in [c['id'] for c in load_cells()]:
-                return self._send(400, 'application/json', b'{"error":"unknown cell"}')
-            sw = os.path.join(ROOT, 'run', 'switching')
-            if os.path.exists(sw) and time.time() - os.path.getmtime(sw) < 120:
-                return self._send(409, 'application/json', b'{"error":"a switch is already running"}')
+                return self._jsend(400, dict(error='unknown cell'))
             if cid == current_cell() and not body.get('force'):
-                return self._send(200, 'application/json', json.dumps(dict(ok=True, same=True, current=cid)).encode())
+                return self._jsend(200, dict(ok=True, same=True, current=cid))
             log = open(os.path.join(ROOT, 'run', 'switch.log'), 'ab')
             subprocess.Popen([os.path.join(ROOT, 'scripts', 'switch.sh'), cid], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-            self._send(202, 'application/json', json.dumps(dict(ok=True, switching=cid)).encode())
+            self._jsend(202, dict(ok=True, switching=cid))
     return H
 
 

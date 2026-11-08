@@ -17,6 +17,11 @@
   #hover{position:fixed;bottom:6px;left:50px;color:#c9d6e2;font-variant-numeric:tabular-nums;pointer-events:none}
   canvas{display:block}
   #banner{position:fixed;top:45%;left:50%;transform:translate(-50%,-50%);background:#172029;border:1px solid #3a5a78;border-radius:8px;padding:16px 26px;color:#e6edf3;font-size:14px;text-align:center;display:none;z-index:9;max-width:70vw}
+  #scanbtn{display:none}
+  #scanbox{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#172029;border:1px solid #3a5a78;border-radius:8px;padding:14px 18px;color:#e6edf3;font-size:13px;display:none;z-index:10;width:min(900px,92vw);max-height:86vh;overflow:auto;box-shadow:0 8px 40px #000a}
+  #scanbox h2{margin:0 0 8px;font-size:15px} #scanbox .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:6px 0}
+  #scanbox table{border-collapse:collapse;width:100%;margin-top:8px} #scanbox th,#scanbox td{border-bottom:1px solid #2a3a4a;padding:4px 8px;text-align:left;white-space:nowrap} #scanbox th{color:#9fb0bf;font-weight:600}
+  #scanbox progress{width:320px} #scanmsg{color:#9fb0bf} #scanbox .err{color:#ff8a8a}
   #banner small{display:block;color:#9fb0bf;margin-top:6px;font-size:12px}
   canvas.pannable{cursor:grab}
   canvas.panning{cursor:grabbing}
@@ -25,6 +30,7 @@
 <div id="bar">
   <h1><span id="live"></span>NR-Scope live PRB grid</h1>
   <span id="cell"></span>
+  <button id="scanbtn" title="Search a band for cells, read their PLMN, and choose one to view (stops the live view while scanning)">Scan…</button>
   <label id="cellselL" style="display:none" title="Switching restarts nrscope and the SDR for everybody watching this server">cell <select id="cellsel"></select></label>
   <label>window <select id="win">
     <option value="4">4 slots (2 ms)</option><option value="10">10 slots (5 ms)</option><option value="20">20 slots (10 ms)</option>
@@ -47,6 +53,17 @@
 </div>
 <canvas id="cv"></canvas>
 <div id="hover"></div>
+<div id="scanbox">
+  <h2>Cell scan (nrscan + SIB1)</h2>
+  <div class="row">
+    <label>band <select id="scanband"></select></label>
+    <label>RX gain <input id="scangain" type="number" value="50" min="0" max="76" step="1" style="width:56px"> dB</label>
+    <button id="scango">Start scan</button><button id="scancancel" style="display:none">Cancel</button><button id="scanclose">Close</button>
+  </div>
+  <div class="row"><progress id="scanprog" max="1" value="0" style="display:none"></progress><span id="scanmsg"></span></div>
+  <div id="scanres"></div>
+  <small style="color:#7f93a5;display:block;margin-top:8px">The B210 can only do one thing at a time: the live view pauses while the scan runs (about 10 s to 3 min depending on the band), then you pick a cell and the viewer restarts on it. 40–60 dB suits a nearby commercial cell; a very high gain can overload the front end and hide cells.</small>
+</div>
 <div id="banner"></div>
 <script>
 (function(){
@@ -90,7 +107,7 @@ function $(id){ return document.getElementById(id); }
 function b64(s){ var bin = atob(s), n = bin.length, u = new Uint8Array(n); for (var i = 0; i < n; i++) u[i] = bin.charCodeAt(i); return u; }
 
 // ---- data in
-function setMeta(m){ meta = m; if (m.name) $('cell').textContent = m.name + ' | PCI ' + m.pci + ' | ' + m.scs_khz + ' kHz SCS'; }
+function setMeta(m){ meta = m; if (m.name) $('cell').textContent = m.name + ' | PCI ' + m.pci + ' | ' + m.scs_khz + ' kHz SCS' + (m.scanned ? ' | no slot/TDD alignment' : ''); }
 if (!window.__DEMO) fetch('/meta').then(function(r){ return r.json(); }).then(setMeta).catch(function(){});
 
 function onMsg(m){
@@ -137,8 +154,12 @@ function loadCells(){
   fetch('/cells').then(function(r){ return r.json(); }).then(function(c){
     var sel = $('cellsel'); sel.innerHTML = '';
     (c.cells || []).forEach(function(x){ var o = document.createElement('option'); o.value = x.id; o.textContent = x.name; sel.appendChild(o); });
-    cellCur = c.current || ''; if (cellCur) sel.value = cellCur; else sel.selectedIndex = -1;
-    $('cellselL').style.display = (c.cells && c.cells.length) ? 'flex' : 'none';
+    cellCur = c.current || '';
+    if (cellCur && !(c.cells || []).some(function(x){ return x.id === cellCur; })) { var o2 = document.createElement('option'); o2.value = cellCur; o2.textContent = c.current_name || cellCur; sel.appendChild(o2); }   // a cell chosen from the scan
+    if (cellCur) sel.value = cellCur; else sel.selectedIndex = -1;
+    $('cellselL').style.display = sel.options.length ? 'flex' : 'none';
+    $('scanbtn').style.display = 'inline-block'; sel.disabled = !!c.scanning;
+    if (c.scanning && !scanPoll) openScan();
   }).catch(function(){});
 }
 $('cellsel').onchange = function(){
@@ -156,6 +177,68 @@ $('cellsel').onchange = function(){
     })
     .catch(function(){ banner('Switch request failed', ''); sel.value = cellCur; setTimeout(function(){ banner(''); }, 3500); });
 };
+
+// ---- scan panel: GET /bands, POST /scan, poll /scan/status, POST /view ----
+var scanPoll = null;
+function jpost(url, obj){ return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj || {}) }).then(function(r){ return r.json().then(function(j){ return { ok: r.ok, j: j }; }); }); }
+function td(tr, t, tag){ var e = document.createElement(tag || 'td'); e.textContent = t; tr.appendChild(e); return e; }
+function openScan(){
+  $('scanbox').style.display = 'block';
+  if (!$('scanband').options.length) fetch('/bands').then(function(r){ return r.json(); }).then(function(b){
+    b.forEach(function(x){ var o = document.createElement('option'); o.value = x.band; o.textContent = x.name + ', ~' + (x.est_s >= 60 ? Math.round(x.est_s / 6) / 10 + ' min' : x.est_s + ' s'); $('scanband').appendChild(o); });
+    var m = /^n(\d+)/.exec(meta.name || ''); if (m) $('scanband').value = m[1];
+  });
+  scanTick(); if (!scanPoll) scanPoll = setInterval(scanTick, 1000);
+}
+function closeScan(){ $('scanbox').style.display = 'none'; if (scanPoll) { clearInterval(scanPoll); scanPoll = null; } }
+$('scanbtn').onclick = openScan; $('scanclose').onclick = closeScan;
+$('scango').onclick = function(){
+  var band = parseInt($('scanband').value, 10), gain = parseFloat($('scangain').value);
+  jpost('/scan', { band: band, gain: gain }).then(function(x){ if (!x.ok) $('scanmsg').textContent = 'Could not start: ' + (x.j.error || 'error'); else scanTick(); });
+};
+$('scancancel').onclick = function(){ jpost('/scan/cancel').then(scanTick); };
+function viewCell(r){
+  banner('Switching to PCI ' + r.pci + ' (' + (r.freq_hz / 1e6).toFixed(2) + ' MHz) ...', 'nrscope and the web server restart; this takes about 15-40 s');
+  closeScan();
+  jpost('/view', { gscn: r.gscn, pci: r.pci }).then(function(x){
+    if (!x.ok) { banner('Could not switch: ' + (x.j.error || 'error'), ''); setTimeout(function(){ banner(''); }, 3500); return; }
+    var t0 = Date.now(), id = x.j.switching, poll = setInterval(function(){
+      if (Date.now() - t0 > 120000) { clearInterval(poll); banner('Switch is taking long', 'check run/switch.log and run/logs/nrscope.log on the host'); return; }
+      fetch('/cells').then(function(r2){ return r2.json(); }).then(function(c){ if (c.current === id && !c.switching) { clearInterval(poll); location.reload(); } }).catch(function(){});
+    }, 1500);
+  });
+}
+function scanTick(){
+  fetch('/scan/status').then(function(r){ return r.json(); }).then(function(st){
+    var run = st.state === 'running', msg = $('scanmsg'), pg = $('scanprog'), res = $('scanres');
+    $('scango').style.display = run ? 'none' : ''; $('scancancel').style.display = run ? '' : 'none'; $('scanband').disabled = $('scangain').disabled = run;
+    $('cellsel').disabled = run; pg.style.display = 'none'; msg.className = '';
+    if (run) {
+      var el = Math.round(st.elapsed || (Date.now() / 1000 - st.started));
+      if (st.phase === 'scan' && st.scan) { var sc = st.scan; pg.style.display = ''; pg.value = Math.max(0, Math.min(1, (sc.gscn - sc.lo) / Math.max(1, sc.hi - sc.lo)));
+        msg.textContent = 'scanning n' + st.band + ' at ' + st.gain + ' dB: pass ' + sc.pass_no + ' (' + sc.scs_khz + ' kHz SSB), GSCN ' + sc.gscn + ' of ' + sc.lo + '–' + sc.hi + ', ' + sc.hits + ' hit(s), ' + el + ' s'; }
+      else if (st.phase === 'sib1') { msg.textContent = 'reading SIB1 (PLMN) of cell ' + (st.cell ? st.cell.no + '/' + st.cell.of + ', PCI ' + st.cell.pci : '') + ', ' + el + ' s'; }
+      else msg.textContent = 'starting (' + (st.phase || '') + ') ...';
+    } else if (st.state === 'done') msg.textContent = 'n' + st.band + ' at ' + st.gain + ' dB: ' + (st.results || []).length + ' cell(s); nrscan ' + Math.round(st.timing.sweep_s) + ' s + SIB1 ' + Math.round(st.timing.sib1_s) + ' s = ' + Math.round(st.timing.total_s) + ' s';
+    else if (st.state === 'error') { msg.className = 'err'; msg.textContent = 'scan failed: ' + (st.error || 'error'); }
+    else if (st.state === 'cancelled') msg.textContent = 'scan cancelled';
+    else msg.textContent = 'pick a band and press Start scan';
+    res.innerHTML = '';
+    var rows = st.results || [];
+    if (rows.length) {
+      var tb = document.createElement('table'), h = document.createElement('tr');
+      ['PCI', 'GSCN', 'SSB MHz', 'SCS', 'PLMN', 'TAC', 'NCI', 'SIB1', ''].forEach(function(t){ td(h, t, 'th'); }); tb.appendChild(h);
+      rows.forEach(function(r){
+        var tr = document.createElement('tr'); td(tr, r.pci); td(tr, r.gscn); td(tr, (r.freq_hz / 1e6).toFixed(2)); td(tr, r.scs_khz + ' kHz'); td(tr, (r.plmn || []).join('  ') || '–');
+        td(tr, r.tac != null ? r.tac : '–'); td(tr, r.nci != null ? '0x' + r.nci.toString(16).toUpperCase() : '–'); td(tr, r.ok ? r.sib1_s + ' s' : 'not decoded');
+        var c = document.createElement('td'), b = document.createElement('button'); b.textContent = 'View'; b.disabled = run || st.state !== 'done'; b.onclick = function(){ viewCell(r); }; c.appendChild(b); tr.appendChild(c); tb.appendChild(tr);
+      });
+      res.appendChild(tb);
+    } else if (st.state === 'done') res.textContent = 'No cell found. Try another gain (40–60 dB) or another band.';
+    if (!run && scanPoll && st.state !== 'none') { clearInterval(scanPoll); scanPoll = null; }
+    if (!run) loadCells();
+  }).catch(function(){});
+}
 if (!window.__DEMO) loadCells();
 
 // ---- controls
@@ -436,7 +519,7 @@ function draw(){
   }
 
   var spf = meta.slots_per_frame || 20;
-  var tddOn = $('ov_tdd').checked, ssbOn = $('ov_ssb').checked, csOn = $('ov_cs0').checked, frOn = $('ov_frm').checked;
+  var tddOn = $('ov_tdd').checked && !!meta.tdd, ssbOn = $('ov_ssb').checked, csOn = $('ov_cs0').checked, frOn = $('ov_frm').checked && !!(meta.tdd || meta.ssb);
   var tdd = meta.tdd || { period_slots: 10, dl: 6, special: 1, ul: 3 };
   function slotCh(si){ var t = si % tdd.period_slots; if (tdd.pattern) return tdd.pattern.charAt(t); return t < tdd.dl ? 'D' : (t < tdd.dl + tdd.special ? 'S' : 'U'); }
 
@@ -547,7 +630,7 @@ function draw(){
   ctx.textAlign = 'left'; ctx.fillText('-' + (W >= 400 ? (W * 0.5 / 1000).toFixed(1) + ' s' : (W * 0.5).toFixed(W >= 20 ? 0 : 1) + ' ms'), G.px, G.ty + G.th + 12);
 
   // legend
-  var items = [['#4c78a8', 'DL slot'], ['#f2b134', 'special'], ['#59a14f', 'UL slot'], ['#fff', 'SSB'], ['#00e5ff', 'CORESET0 / SIB1' + (meta.coreset0 && $('ov_cs0').checked ? cs0PerTxt : '')]], lx = G.px;
+  var items = [].concat(meta.tdd ? [['#4c78a8', 'DL slot'], ['#f2b134', 'special'], ['#59a14f', 'UL slot']] : [], meta.ssb ? [['#fff', 'SSB']] : [], meta.coreset0 ? [['#00e5ff', 'CORESET0 / SIB1' + ($('ov_cs0').checked ? cs0PerTxt : '')]] : []), lx = G.px;
   ctx.font = '11px system-ui';
   for (var i2 = 0; i2 < items.length; i2++) {
     ctx.fillStyle = items[i2][0]; ctx.fillRect(lx, G.ly - 8, 14, 9); ctx.fillStyle = '#b9c7d4'; ctx.fillText(items[i2][1], lx + 19, G.ly);
@@ -559,10 +642,10 @@ function draw(){
   var pms = tdd.period_slots * 15 / (meta.scs_khz || 30);
   ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 12px ui-monospace, Menlo, monospace'; ctx.textAlign = 'left';
   var ptxt = 'Slot format: ' + pat.join(' ');
-  ctx.fillText(ptxt, G.px, G.ly - 34);
+  if (meta.tdd) ctx.fillText(ptxt, G.px, G.ly - 34);
   if (meta.beam_note) { ctx.fillStyle = '#9fb0bf'; ctx.font = '11px system-ui'; ctx.textAlign = 'left'; ctx.fillText(meta.beam_note, G.px, G.ly - 51); ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 12px ui-monospace, Menlo, monospace'; }
   ctx.fillStyle = '#9fb0bf'; ctx.font = '11px system-ui';
-  ctx.fillText('period ' + pms + ' ms (' + tdd.period_slots + ' slots @ ' + (meta.scs_khz || 30) + ' kHz)  \u00b7  D downlink  \u00b7  U uplink  \u00b7  S special = ' + sd + ' DL + ' + (14 - sd - su) + ' flex + ' + su + ' UL symbols', G.px, G.ly - 19);
+  if (meta.tdd) ctx.fillText('period ' + pms + ' ms (' + tdd.period_slots + ' slots @ ' + (meta.scs_khz || 30) + ' kHz)  \u00b7  D downlink  \u00b7  U uplink  \u00b7  S special = ' + sd + ' DL + ' + (14 - sd - su) + ' flex + ' + su + ' UL symbols', G.px, G.ly - 19);
 
   // PBCH constellation (equalised QPSK symbols from nrscope's PBCH decoder, one frame per SSB; newest frames brightest)
   if (iqOn && $('ov_const').checked) {

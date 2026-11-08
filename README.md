@@ -325,6 +325,24 @@ decoder result on commercial cells.
 | `NRSCOPE_BIN` | nrscope binary used by `nrscope_loop.sh` |
 | `ZMQ_ENDPOINT`, `HTTP`, `META` | server endpoint, listen address, meta file |
 
+## Scan for cells from the GUI (nrscan + SIB1)
+
+The **Scan…** button in the top bar opens a panel: pick a band (n1, n3, n7, n8, n20, n28, n38, n40, n41, n66, n77, n78, n79, list in `config/bands.json`) and an RX gain
+(default 50 dB; 40-60 dB suits a nearby commercial cell, 70 dB and above can overload the B210 front end and hide cells), then **Start scan**.
+
+1. The server stops nrscope (the web server keeps running; the B210 can only do one thing at a time, so the live view pauses) and starts `scripts/scan_plmn.py` as a background job.
+2. `nrscan` sweeps the band raster (n41: about 80-95 s, n78: about 100 s, n77: about 3 min). The panel shows the pass, the GSCN and the hits so far.
+3. Repeat hits of one cell (same PCI and SCS, neighbouring GSCN) are merged. nrscope is then started on each cell until it has decoded SIB1 (about 3-5 s per cell, 60 s timeout) to read PLMN list, TAC and NCI.
+4. The result table lists PCI, GSCN, SSB frequency, SCS, PLMN, TAC, NCI. **View** writes `run/auto/scan_g<GSCN>_p<PCI>/{config.yaml,meta.json}` (from `config/scan_template.yaml`: B210 + external clock settings of the n41 testbed, with ssb_freq, pci, scs_index, band_list and rx_gain replaced)
+   and restarts the server and nrscope on that cell (`scripts/switch.sh --custom`). The scanned cell then appears in the cell dropdown.
+
+A scanned cell has no hand-written `meta.json`, so the viewer shows the grid, the PBCH constellation and the decoded MIB, but no TDD strip, slot format, SSB/CORESET0 boxes or slot/SFN alignment (`align.mode = none`).
+For a cell you will watch often, copy `run/auto/<id>/` into `config/`, write the SSB/CORESET0/TDD description like `config/meta_n41_pci610.json`, and add it to `config/cells.json`.
+
+API (same-origin POST only): `GET /bands`, `POST /scan {band, gain}`, `GET /scan/status` (also in `run/scan/job.json`), `POST /scan/cancel`, `POST /view {gscn, pci}` (only cells of the last finished scan).
+`/select` and `/view` are refused while a scan runs. By hand: `scripts/scan_plmn.py [config.yaml] [--band N] [--gain dB] [--json file] [--keep-server]`.
+Measured on the n41 cell, gain 50 dB: nrscan 77 s + SIB1 21 s for 3 hits (one real cell, PCI 610, PLMN 520-04/520-05; the other two hits sit next to it and did not decode SIB1).
+
 ## Known issues and open items
 
 * `nrscan` (tested on the n41 config: it sweeps GSCN 6246-6717 with 15 kHz and then 30 kHz SCS in about 2 minutes and finds GSCN 6624, 2649.75 MHz, PCI 610 and a repeat at GSCN 6627) ends with `terminate called without an active exception` (abort) after the sweep; `run/scan/scan.csv` is complete by then. `scan.sh` now waits 3 s after `stop.sh`; without it the first scan failed with `No devices found for type b200`.

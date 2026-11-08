@@ -1,0 +1,56 @@
+# Template for cells found by the viewer scan: the n41 testbed settings (B210, external clock, AGC limits).
+# scan_plmn.py / server.py replace ssb_freq, pci, scs_index, band_list and rx_gain per scan or per cell.
+nof_usrp_dev: 1
+usrp_setting_0:
+  ssb_freq: 2649750000 # commercial n41 cell PCI 610, GSCN 6624 (lowest GSCN of the scan cluster)
+  band_list: [41] # Scan specific bands with the cell scan function.
+  pci: 610 # n41 cell
+  rf_args: "clock=external,type=b200,master_clock_rate=23.04e6,num_recv_frames=512,recv_frame_size=8936" # For B210
+  # rf_args: "clock=external,type=x300,serial=32B0F2F,master_clock_rate=200000000,sampling_rate=25000000" ## For TwinRX daughterboard
+  # rf_args: "clock=external,type=x300,sampling_rate=23040000" ## For CBX daughterboard
+  rx_gain: 60 # for x310 CBX, max rx gain is 31.5, for b210, it's around 80, for x310 TwinRX, max rx gain is 90
+  min_rx_gain: 35
+  max_rx_gain: 70
+  srate_hz: 23040000 # the sampling rate of USRP, integer division of 200MHz for TwinRX, and 5G sampling rate for CBX: 11520000 or 23040000
+  srsran_srate_hz: 23040000 # the sampling for real signal processing, should be in 5G sampling rate, multiple of 1.92 MHz. 
+  nof_carriers: 1 # srsRAN rf setting, always set to be 1 for now. 
+  nof_antennas: 1 # srsRAN rf setting, always set to be 1 for now.
+  scs_index: 1 #(0: 15kHz, 1: 30kHz, ..., the u in standard) - commercial n41 cell uses 30kHz
+  rf_log_level: "debug"
+  nof_rnti_worker_groups: 4 # number of of threads for DCI decoding, each will divide the UEs into small groups
+  nof_bwps: 1 # number of BWP of the cell
+  nof_workers: 4 # using worker pool to asynchronously process the slot data
+  cpu_affinity: false # pin the worker's thread into CPU or not.
+
+  log_name: "a.csv"
+  google_dataset_id: "ngscope5g_dci_log_wanhr"
+  # rrc_recfg_config: "rrc_recfg_config/t-mobile-fdd.yaml"
+
+# usrp_setting_1:
+#   ssb_freq: 2649750000 # commercial n41 cell PCI 610, GSCN 6624 (lowest GSCN of the scan cluster)
+#   rf_args: "clock=external,type=b200" # For B210
+#   # rf_args: "clock=external,type=x300,serial=32B0F2F,master_clock_rate=200000000,sampling_rate=25000000" ## For TwinRX daughterboard
+#   # rf_args: "clock=external,type=x300,sampling_rate=23040000" ## For CBX daughterboard
+#   rx_gain: 75 # for x310 CBX, max rx gain is 31.5, for b210, it's around 80, for x310 TwinRX, max rx gain is 90
+#   min_rx_gain: 0
+#   max_rx_gain: 80
+#   srate_hz: 15360000 # the sampling rate of USRP, integer division of 200MHz for TwinRX, and 5G sampling rate for CBX: 11520000 or 23040000
+#   srsran_srate_hz: 15360000 # the sampling for real signal processing, should be in 5G sampling rate, multiple of 1.92 MHz. 
+#   nof_carriers: 1 # srsRAN rf setting, always set to be 1 for now. 
+#   nof_antennas: 1 # srsRAN rf setting, always set to be 1 for now.
+#   scs_index: 0 #(0: 15kHz, 1: 30kHz, ..., the u in standard)
+#   rf_log_level: "debug"
+#   nof_rnti_worker_groups: 4 # number of of threads for DCI decoding, each will divide the UEs into small groups
+#   nof_bwps: 1 # number of BWP of the cell
+#   nof_workers: 4 # using worker pool to asynchronously process the slot data
+#   cpu_affinity: false # pin the worker's thread into CPU or not.
+
+#   log_name: "b.csv"
+#   google_dataset_id: "ngscope5g_dci_log_wanhr"
+
+log_config:
+  local_log: true
+  push_to_google: false
+  google_service_account_credential: "/home/wanhr/Downloads/nsf-2223556-222187-02b924918c95.json"
+  enable_gui: false
+

@@ -10,6 +10,10 @@ META="${META:-$ROOT/server/meta.json}"
 SSBPRB=$(python3 -c "import json,sys;s=json.load(open(sys.argv[1])).get('ssb',{});print('%d,%d'%(s['prb_lo'],s['prb_hi']))" "$META" 2>/dev/null)
 RUN="$ROOT/run"; mkdir -p "$RUN/logs"
 "$ROOT/scripts/stop.sh" >/dev/null 2>&1
+if [ -n "$CELL_ID" ]; then                          # set by switch.sh --custom (cell found by the scan)
+  echo "$CELL_ID" > "$RUN/cell.id"; echo "$CELL_NAME" > "$RUN/cell.name"
+else
+rm -f "$RUN/cell.name"
 python3 - "$ROOT" "$CFG" "$META" > "$RUN/cell.id" 2>/dev/null <<'PY'
 import json, os, sys
 root, cfg, meta = sys.argv[1:4]
@@ -21,6 +25,7 @@ try:
 except Exception:
     pass
 PY
+fi
 cp "$CFG" "$RUN/config.yaml"                       # nrscope reads ./config.yaml
 cp -n "$ROOT/build/nrscope/src/to_google.py" "$RUN/" 2>/dev/null
 cd "$RUN"
