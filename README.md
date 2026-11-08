@@ -34,6 +34,7 @@ scripts/start.sh                  # server + nrscope; open http://<host>:8080/
 scripts/stop.sh                   # stop both (the B210 is exclusive, always stop before scanning)
 scripts/switch.sh n41_pci610      # restart on another cell of config/cells.json (the viewer's cell dropdown does the same)
 scripts/scan.sh config/xxx.yaml   # nrscan cell search
+scripts/scan_plmn.py config/xxx.yaml   # nrscan + SIB1 of every cell found: PLMN list, TAC, cell identity (viewer is not restarted)
 ```
 
 * `scripts/start.sh [config.yaml]` defaults to `config/testbed_n78.yaml`. It copies the config to `run/config.yaml`
@@ -327,6 +328,7 @@ decoder result on commercial cells.
 ## Known issues and open items
 
 * `nrscan` (tested on the n41 config: it sweeps GSCN 6246-6717 with 15 kHz and then 30 kHz SCS in about 2 minutes and finds GSCN 6624, 2649.75 MHz, PCI 610 and a repeat at GSCN 6627) ends with `terminate called without an active exception` (abort) after the sweep; `run/scan/scan.csv` is complete by then. `scan.sh` now waits 3 s after `stop.sh`; without it the first scan failed with `No devices found for type b200`.
+* `scripts/scan_plmn.py` (PLMN scan): nrscan finds the cells, then nrscope runs on each one until it has decoded SIB1 and the PLMN list, TAC and cell identity are read from its log. n41 test: nrscan sweep 93 s, SIB1 decode 3.5 s (11 s with start-up and shutdown), 103 s in total for one cell; result GSCN 6624, PCI 610, PLMNs 520-04 and 520-05, TAC 5106021, NCI 0x1FC110899. Every further cell adds about 10 s. The SCS of the nrscope pass is the one in the yaml (`scs_index`).
 * n41 meta: `config/meta_n41_pci610.json` draws CORESET0 40 PRBs wide (126-165) but nrscope's SIB1 DCI line says `coreset0_bw=48` (MIB CORESET0 idx 10). The box should be derived from the decoded MIB (idx, SS0 idx, SSB idx, k_SSB) instead of the static meta.
 * n41: the power-based CORESET0 activity test (viewer legend, `cs0_interval.py`) finds nothing, although the decoder sees SIB1 every 20 ms per beam (`sib1_period.py`). Slot-average power and an 8-PRB window scan both failed to separate it from the cell traffic, or the PRBs in the meta are wrong (meta: 40 PRBs, decoder: 48). The legend is therefore wrong on n41; the viewer should take the SIB1 occasions from the `sib1c` decodes (or from the MIB) instead of power.
 * `scripts/cs0_interval.py` keeps the SFN parity of `cycle_slots` (n41); before this fix it counted the SSB slots as CORESET0 activity.
