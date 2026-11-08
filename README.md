@@ -100,7 +100,7 @@ Tick **REG/CCE/DMRS** (per-symbol view, window of about 10 slots or less) to see
   Bundle `b` carries CCE `i` with `b = (r*C + c + PCI) mod nB`, `i = 2c + r`, `C = nB/2`. The label `C<i>` in every bundle is that CCE number.
 * **Active CCEs.** A bundle is drawn bright when its mean power is more than 8 dB above the PRBs next to CORESET0 in the same symbols; the label above the box then reads e.g. `PDCCH CCE 0-3 - AL 4`.
   On the testbed this matches the SIB1 DCI exactly: PRBs 3-8 and 15-20 of symbols 0-1, which is CCEs 0-3 (aggregation level 4).
-* **DMRS.** The dots are the PDCCH DMRS positions, subcarriers 1, 5 and 9 of every REG (25 % of the REs). They are drawn from the standard, not measured: the grid has one value per PRB, so real DMRS power would need a per-subcarrier tap in nrscope. Dots appear when a PRB row is at least 18 px high.
+* **DMRS.** The dots are the PDCCH DMRS positions, subcarriers 1, 5 and 9 of every REG (25 % of the REs). They are drawn from the standard, not measured: the grid has one value per PRB, so real DMRS power would need a per-subcarrier tap in nrscope. Dots appear when a PRB row is at least 12 px high (about 80 PRBs on a full-height screen), the REG lines at 10 px.
 
 ## Layout
 

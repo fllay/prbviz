@@ -563,11 +563,11 @@ function draw(){
       if (on) { ctx.fillStyle = 'rgba(0,229,255,0.16)'; ctx.fillRect(xL, yT, wB, hB); }
       ctx.strokeStyle = on ? '#00e5ff' : 'rgba(0,229,255,0.4)'; ctx.lineWidth = on ? 1.5 : 1; ctx.strokeRect(xL + 0.5, yT + 0.5, wB - 1, hB - 1);
       if (wB >= 16 && hB >= 11) { ctx.fillStyle = on ? '#fff' : 'rgba(180,240,255,0.75)'; ctx.fillText((wB >= 36 ? 'CCE ' : 'C') + cceOf[b], xL + 2, yT + 10); }
-      if (rh >= 14 && sw >= 8) {                                    // REG cell lines + DMRS (RE 1, 5, 9 of every REG), only when zoomed in enough
+      if (rh >= 10 && sw >= 8) {                                    // REG cell lines + DMRS (RE 1, 5, 9 of every REG), only when zoomed in enough
         ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1;
         for (p = 1; p < bw; p++) { y = Math.round(yT + p * rh) + 0.5; ctx.beginPath(); ctx.moveTo(xL, y); ctx.lineTo(xL + wB, y); ctx.stroke(); }
         for (var l = 1; l < ns; l++) { var xx = Math.round(xL + l * sw) + 0.5; ctx.beginPath(); ctx.moveTo(xx, yT); ctx.lineTo(xx, yT + hB); ctx.stroke(); }
-        if (rh >= 18) {
+        if (rh >= 12) {
           ctx.fillStyle = on ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.45)';
           for (p = c0.prb_lo + b * bw; p < c0.prb_lo + (b + 1) * bw; p++) for (y = 0; y < ns; y++) for (k = 1; k < 12; k += 4) ctx.fillRect(Math.round(xL + (y + 0.5) * sw - 1), Math.round(Yb(p) - (k + 0.5) * rh / 12 - 1), 2, 2);
         }
