@@ -21,9 +21,10 @@ Tested on a Raspberry Pi 5 host with a USRP B210 against an N78 lab gNB (and a c
 4. [Data path and wire formats](#data-path-and-wire-formats)
 5. [How nrscope decodes the cell (block diagrams with C functions)](#how-nrscope-decodes-the-cell)
 6. [Timing tracker fix (why SIB1 used to stop after about 14 s)](#timing-tracker-fix)
-7. [Modulation notes](#modulation-notes)
-8. [Environment variables](#environment-variables)
-9. [Known issues and open items](#known-issues-and-open-items)
+7. [How often is CORESET0 / SIB1 sent?](#how-often-is-coreset0--sib1-sent)
+8. [Modulation notes](#modulation-notes)
+9. [Environment variables](#environment-variables)
+10. [Known issues and open items](#known-issues-and-open-items)
 
 ## Quick start
 
@@ -61,6 +62,9 @@ Current testbed: gNB PCI 1, SSB at 3483.84 MHz (ARFCN 632256, GSCN 7835), 30 kHz
   sub-boxes are drawn from the nominal SSB layout (they ignore `k_SSB`, so edges can be off by a few subcarriers).
 * **MIB fields.** Under the PBCH constellation the viewer prints the decoded MIB: SFN, SSB index, common SCS, `k_SSB`, DM-RS type-A position,
   CORESET0 and SearchSpace0 indices, cell-barred and intra-frequency-reselection flags. They are only updated from frames whose CRC is OK.
+* **Pause and scroll.** Pause freezes a copy of the 4096-slot history (about 2 s at 30 kHz SCS). While paused a *scroll* slider appears in the toolbar;
+  the plot can also be dragged with the mouse, scrolled with the wheel (or a horizontal trackpad swipe) or moved with the arrow keys
+  (Shift = half a window, PageUp/PageDown = one window, Home/End = oldest/newest). The status line shows the offset from the frozen newest slot.
 * **PBCH constellation.** The equalised PBCH symbols (432 QPSK points per SSB) with the PBCH CRC result and an EVM computed on
   the server. One frame is produced per SSB period, so it updates continuously, a few frames per second (throttled to 10 per second;
   the newest frames are drawn brightest). The panel shows the last 8 frames. It needs nothing but a decoded PBCH, so it also works on cells
@@ -265,6 +269,14 @@ A second way to avoid the drift would be a common 10 MHz reference for the gNB a
 
 Debug: `NRSCOPE_CFO_DBG=1` prints `SYNCDBG ... cfo_hz delay_us sfn sf` every 200th call and, from the tracker,
 `TRACKDBG opp crc_ok crc delay_us cfo_hz nof_re` (`nof_re = 254` is PSS + SSS, the REs used for the delay/CFO measurement).
+
+## How often is CORESET0 / SIB1 sent?
+
+`scripts/cs0_interval.py [seconds]` captures per-symbol power from the live stream and compares the CORESET0 PRBs (0-23) with the PRBs outside them,
+slot by slot and frame by frame. On the lab testbed (CORESET0 idx 0, SS0 idx 0, SSB every frame) it found the SIB1 PDCCH + PDSCH only in
+slot 1 of frames with SFN mod 16 = 0, i.e. once every 160 ms (the nominal SIB1 period, no repetitions in between): 75 of 75 such frames
+were 10.5 dB or more above the neighbouring PRBs, every other frame stayed at or below 4.9 dB. The dashed CORESET0 box in the viewer is
+the nominal location from the meta file and is drawn in every frame, so most boxes are empty. Paging and RAR also use CORESET0 but only when needed.
 
 ## Modulation notes
 

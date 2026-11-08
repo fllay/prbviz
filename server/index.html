@@ -16,6 +16,8 @@
   #stat{margin-left:auto;font-variant-numeric:tabular-nums;color:#9fb0bf}
   #hover{position:fixed;bottom:6px;left:50px;color:#c9d6e2;font-variant-numeric:tabular-nums;pointer-events:none}
   canvas{display:block}
+  canvas.pannable{cursor:grab}
+  canvas.panning{cursor:grabbing}
 </style></head>
 <body>
 <div id="bar">
@@ -36,6 +38,7 @@
   <label><input id="ov_frm" type="checkbox" checked>SFN/slots</label>
   <label><input id="ov_const" type="checkbox" checked>PBCH constellation</label>
   <button id="pause">Pause</button>
+  <label id="panlab" style="display:none" title="drag the plot, mouse wheel / shift+wheel, or arrow keys also scroll (Shift = half window, Home/End = oldest/newest)">scroll <input id="pan" type="range" min="0" max="0" value="0" step="1" style="width:320px"> <span id="panpos" style="min-width:150px;font-variant-numeric:tabular-nums;color:#9fb0bf"></span></label>
   <span id="stat"></span>
 </div>
 <canvas id="cv"></canvas>
@@ -50,6 +53,7 @@ var sibQ = [], iqOn = true;
 var S = 14, symOn = false, symRing = null, symOk = new Uint8Array(R);
 var newest = -1, W = 400, dbMin = -15, dbMax = 30;
 var paused = false, snap = null, es = null;
+var panOff = 0, maxPan = 0, snapMin = 0, panDrag = null;   // while paused: how many slots the view is scrolled back from the frozen newest slot
 var rxSlots = 0, missing = 0, rate = 0, lastGain = 0, lastRx = 0, lastMsgAt = 0;
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
 var off = document.createElement('canvas'), offc = off.getContext('2d'), img = null;
@@ -135,9 +139,44 @@ $('dbmin').onchange = function(){ dbMin = +this.value; buildLut(); };
 $('dbmax').onchange = function(){ dbMax = +this.value; buildLut(); };
 $('pause').onclick = function(){
   paused = !paused; this.textContent = paused ? 'Resume' : 'Pause';
-  if (paused && ring) snap = { ring: ring.slice(), abs: ringAbs.slice(), gain: gainRing.slice(), newest: newest, sym: symRing ? symRing.slice() : null, symOk: symOk.slice() };
-  else snap = null;
+  if (paused && ring) {
+    snap = { ring: ring.slice(), abs: ringAbs.slice(), gain: gainRing.slice(), newest: newest, sym: symRing ? symRing.slice() : null, symOk: symOk.slice() };
+    snapMin = newest; for (var i = 0; i < R; i++) { var a0 = snap.abs[i]; if (a0 >= 0 && a0 > newest - R && a0 < snapMin) snapMin = a0; }
+  } else snap = null;
+  panOff = 0; panDrag = null;
+  var on = paused && !!snap;
+  $('panlab').style.display = on ? 'flex' : 'none'; cv.classList.toggle('pannable', on); cv.classList.remove('panning');
 };
+function slotMs(){ return 15 / (meta.scs_khz || 30); }
+function panTo(v){ panOff = Math.max(0, Math.min(maxPan, Math.round(v))); }
+$('pan').oninput = function(){ if (paused && snap) panTo(maxPan - +this.value); };
+cv.addEventListener('wheel', function(e){
+  if (!paused || !snap || !G) return;
+  e.preventDefault();
+  var d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+  if (e.deltaMode === 1) d *= 16;
+  var st = Math.round(Math.abs(d) / Math.max(1, G.pw / W)); if (!st) st = 1;
+  panTo(panOff + (d > 0 ? -st : st));                       // scroll right / down = towards newer
+}, { passive: false });
+cv.addEventListener('mousedown', function(e){
+  if (!paused || !snap || e.button !== 0) return;
+  panDrag = { x: e.clientX, off: panOff }; cv.classList.add('panning'); e.preventDefault();
+});
+window.addEventListener('mousemove', function(e){ if (panDrag && G) panTo(panDrag.off + (e.clientX - panDrag.x) / Math.max(1e-6, G.pw / W)); });   // drag right = back in time
+window.addEventListener('mouseup', function(){ panDrag = null; cv.classList.remove('panning'); });
+window.addEventListener('keydown', function(e){
+  if (!paused || !snap) return;
+  var t = e.target && e.target.tagName; if (t === 'INPUT' || t === 'SELECT') return;
+  var st = e.shiftKey ? Math.max(1, W >> 1) : 1, k = e.key;
+  if (k === 'ArrowLeft') panTo(panOff + st);
+  else if (k === 'ArrowRight') panTo(panOff - st);
+  else if (k === 'PageUp') panTo(panOff + W);
+  else if (k === 'PageDown') panTo(panOff - W);
+  else if (k === 'Home') panTo(maxPan);
+  else if (k === 'End') panTo(0);
+  else return;
+  e.preventDefault();
+});
 setInterval(function(){ rate = rxSlots - lastRx; lastRx = rxSlots; }, 1000);
 
 // ---- geometry
@@ -245,7 +284,15 @@ function draw(){
     ctx.fillText('waiting for data from nrscope (needs SIB1 decoded)...', G.px, G.py + 30);
     return;
   }
-  var left = s.newest - W + 1;
+  var isPan = paused && !!snap;
+  maxPan = isPan ? Math.max(0, s.newest - snapMin + 1 - W) : 0;
+  if (panOff > maxPan) panOff = maxPan;
+  var vNewest = s.newest - (isPan ? panOff : 0);
+  if (isPan) {
+    var pn = $('pan'); pn.max = maxPan; if (document.activeElement !== pn) pn.value = maxPan - panOff;
+    $('panpos').textContent = panOff ? '\u2212' + (panOff * slotMs()).toFixed(1) + ' ms (' + panOff + ' slots) \u00b7 max \u2212' + (maxPan * slotMs()).toFixed(0) + ' ms' : 'at newest \u00b7 max \u2212' + (maxPan * slotMs()).toFixed(0) + ' ms';
+  }
+  var left = vNewest - W + 1;
   if (!serverAlign && !paused && performance.now() - lastCal > 2000) { lastCal = performance.now(); calibrate(s); }
   var sh = serverAlign ? 0 : calShift;
   var useSym = symOn && s.sym, iw = useSym ? W * S : W;
@@ -420,7 +467,7 @@ function draw(){
   ctx.stroke();
   ctx.fillStyle = '#9fb0bf'; ctx.font = '10px system-ui'; ctx.textAlign = 'left';
   ctx.fillText('mean power over all PRBs (dB)', G.px + 4, G.ty + 11);
-  ctx.textAlign = 'right'; ctx.fillText('now', G.px + G.pw - 2, G.ty + G.th + 12);
+  ctx.textAlign = 'right'; ctx.fillText(panOff ? '\u2212' + (panOff * slotMs()).toFixed(1) + ' ms' : (paused ? 'paused' : 'now'), G.px + G.pw - 2, G.ty + G.th + 12);
   ctx.textAlign = 'left'; ctx.fillText('-' + (W >= 400 ? (W * 0.5 / 1000).toFixed(1) + ' s' : (W * 0.5).toFixed(W >= 20 ? 0 : 1) + ' ms'), G.px, G.ty + G.th + 12);
 
   // legend
@@ -482,8 +529,8 @@ function draw(){
   }
 
   // status + hover
-  var nsa = s.newest + sh, sfn = Math.floor(nsa / spf) % 1024;
-  $('stat').textContent = 'SFN ' + sfn + ' slot ' + (nsa % spf) + (serverAlign ? '  |  slot align ' + (serverShift > 0 ? '+' : '') + serverShift + ' (server, ' + (serverMode === 'ul' ? 'UL slot' : serverMode === 'none' ? 'none' : 'SSB') + ')' : calOk ? '  |  slot align ' + (sh > 0 ? '+' : '') + sh + ' (auto, SSB)' : '  |  aligning...') + '  |  gain ' + lastGain.toFixed(1) + ' dB  |  ' + rate + ' slots/s  |  missing ' + missing + (symOn ? (s.sym ? '  |  symbol view' : '  |  symbol view: waiting') : '') + (paused ? '  |  PAUSED' : '');
+  var nsa = vNewest + sh, sfn = Math.floor(nsa / spf) % 1024;
+  $('stat').textContent = 'SFN ' + sfn + ' slot ' + (nsa % spf) + (serverAlign ? '  |  slot align ' + (serverShift > 0 ? '+' : '') + serverShift + ' (server, ' + (serverMode === 'ul' ? 'UL slot' : serverMode === 'none' ? 'none' : 'SSB') + ')' : calOk ? '  |  slot align ' + (sh > 0 ? '+' : '') + sh + ' (auto, SSB)' : '  |  aligning...') + '  |  gain ' + lastGain.toFixed(1) + ' dB  |  ' + rate + ' slots/s  |  missing ' + missing + (symOn ? (s.sym ? '  |  symbol view' : '  |  symbol view: waiting') : '') + (paused ? '  |  PAUSED' + (panOff ? ' (scrolled \u2212' + (panOff * slotMs()).toFixed(1) + ' ms)' : '') : '');
   if (mouse && mouse.x >= G.px && mouse.x < G.px + G.pw && mouse.y >= G.py && mouse.y < G.py + G.ph) {
     var jj = Math.floor((mouse.x - G.px) / cw), hsym = useSym ? Math.floor(((mouse.x - G.px) / cw - jj) * S) : -1, pr = LO + Math.floor((G.py + G.ph - mouse.y) / rh), ab = left + jj, cl = ((ab % R) + R) % R, ab2 = ab + sh;
     var ok = s.abs[cl] === ab, qv = ok ? (useSym ? (s.symOk[cl] ? s.sym[(cl * S + hsym) * NP + (pr - LO)] : 0) : s.ring[cl * NP + (pr - LO)]) : 0;
