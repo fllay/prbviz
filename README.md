@@ -326,6 +326,7 @@ decoder result on commercial cells.
 
 ## Known issues and open items
 
+* `nrscan` (tested on the n41 config: it sweeps GSCN 6246-6717 with 15 kHz and then 30 kHz SCS in about 2 minutes and finds GSCN 6624, 2649.75 MHz, PCI 610 and a repeat at GSCN 6627) ends with `terminate called without an active exception` (abort) after the sweep; `run/scan/scan.csv` is complete by then. `scan.sh` now waits 3 s after `stop.sh`; without it the first scan failed with `No devices found for type b200`.
 * n41 meta: `config/meta_n41_pci610.json` draws CORESET0 40 PRBs wide (126-165) but nrscope's SIB1 DCI line says `coreset0_bw=48` (MIB CORESET0 idx 10). The box should be derived from the decoded MIB (idx, SS0 idx, SSB idx, k_SSB) instead of the static meta.
 * n41: the power-based CORESET0 activity test (viewer legend, `cs0_interval.py`) finds nothing, although the decoder sees SIB1 every 20 ms per beam (`sib1_period.py`). Slot-average power and an 8-PRB window scan both failed to separate it from the cell traffic, or the PRBs in the meta are wrong (meta: 40 PRBs, decoder: 48). The legend is therefore wrong on n41; the viewer should take the SIB1 occasions from the `sib1c` decodes (or from the MIB) instead of power.
 * `scripts/cs0_interval.py` keeps the SFN parity of `cycle_slots` (n41); before this fix it counted the SSB slots as CORESET0 activity.
