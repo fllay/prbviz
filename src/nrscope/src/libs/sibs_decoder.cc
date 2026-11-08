@@ -97,7 +97,7 @@ int SIBsDecoder::DecodeandParseSIB1fromSlot(srsran_slot_cfg_t* slot,
     result->sib_result = false;
     return SRSRAN_SUCCESS;
   }
-  const bool quiet = dcisi && state->all_sibs_found && !sib1dbg && !sib1c;   // only the DCI tap is wanted: no per-candidate log lines
+  const bool quiet = dcisi && state->sib1_found && !sib1dbg && !sib1c;   // only the DCI tap is wanted: no per-candidate log lines
   // The tap would run the blind search in every slot. Only search the slot positions (abs mod 320 = 16 frames at 30 kHz) that produced an SI-RNTI DCI before;
   // until one is known, and for 160 ms every ~10 s, search every slot so new positions (another beam, a changed schedule) are learned.
   static std::mutex           dci_si_mx;
