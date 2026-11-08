@@ -13,10 +13,18 @@ USRP B210 ──► nrscope ───────────────► Zer
 
 Tested on a Raspberry Pi 5 host with a USRP B210 against an N78 lab gNB (and a commercial n41 cell, config included).
 
+![The viewer on the n78 lab testbed: 10-slot window, per-symbol view, paused and scrolled back](docs/viewer_n78_testbed.png)
+
+*The viewer on the n78 lab testbed (PCI 1, 30 kHz SCS), per-symbol view, 10 slots (5 ms), paused and scrolled back 26.5 ms.
+Top: the TDD slot strip (`D D D D D D S U U U`, 5 ms period) with slot numbers and the SFN. Grid: carrier PRBs against OFDM symbols, colour = power.
+White box: SSB beam 0 with PSS, PBCH+MIB, SSS, PBCH+MIB; the orange label is the CORESET0/SearchSpace0 index decoded from the MIB; the dashed box is the CORESET0 / SIB1 occasion (SIB1 here every 160 ms).
+Dotted lines: the B210 LO and the gNB centre. Top right: the equalised PBCH QPSK constellation (CRC OK) with the decoded MIB. Bottom: mean power per symbol, the slot format and the legend.*
+
 ## Contents
 
 1. [Quick start](#quick-start)
 2. [What the viewer shows](#what-the-viewer-shows)
+   (cell scan from the GUI: [Scan for cells from the GUI](#scan-for-cells-from-the-gui-nrscan--sib1))
 3. [Layout](#layout)
 4. [Data path and wire formats](#data-path-and-wire-formats)
 5. [How nrscope decodes the cell (block diagrams with C functions)](#how-nrscope-decodes-the-cell)
