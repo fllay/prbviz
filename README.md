@@ -336,7 +336,8 @@ The **Scan…** button in the top bar opens a panel: pick a band (n1, n3, n7, n8
 4. The result table lists PCI, GSCN, SSB frequency, SCS, PLMN, TAC, NCI. **View** writes `run/auto/scan_g<GSCN>_p<PCI>/{config.yaml,meta.json}` (from `config/scan_template.yaml`: B210 + external clock settings of the n41 testbed, with ssb_freq, pci, scs_index, band_list and rx_gain replaced)
    and restarts the server and nrscope on that cell (`scripts/switch.sh --custom`). The scanned cell then appears in the cell dropdown.
 
-A scanned cell has no hand-written `meta.json`, so the viewer shows the grid, the PBCH constellation and the decoded MIB, but no TDD strip, slot format, SSB/CORESET0 boxes or slot/SFN alignment (`align.mode = none`).
+If the scanned cell has the same PCI and SSB frequency as a cell in `config/cells.json` (e.g. the n78 testbed, PCI 1, GSCN 7835), **View** switches to that cell with its saved config and meta, so all overlays are there.
+Otherwise a scanned cell has no hand-written `meta.json`, so the viewer shows the grid, the PBCH constellation and the decoded MIB, but no TDD strip, slot format, SSB/CORESET0 boxes or slot/SFN alignment (`align.mode = none`).
 For a cell you will watch often, copy `run/auto/<id>/` into `config/`, write the SSB/CORESET0/TDD description like `config/meta_n41_pci610.json`, and add it to `config/cells.json`.
 
 API (same-origin POST only): `GET /bands`, `POST /scan {band, gain}`, `GET /scan/status` (also in `run/scan/job.json`), `POST /scan/cancel`, `POST /view {gscn, pci}` (only cells of the last finished scan).

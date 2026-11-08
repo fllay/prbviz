@@ -71,6 +71,19 @@ def scan_status():
     return st
 
 
+def known_cell(r):
+    """id of a config/cells.json cell with the same PCI and SSB frequency as scan result r (its config.yaml holds ssb_freq and pci), else None."""
+    for c in load_cells():
+        try:
+            y = open(os.path.join(ROOT, c['config'])).read()
+            f = int(re.search(r'(?m)^\s*ssb_freq:\s*(\d+)', y).group(1)); p = int(re.search(r'(?m)^\s*pci:\s*(\d+)', y).group(1))
+        except (OSError, AttributeError, ValueError, KeyError):
+            continue
+        if p == r['pci'] and abs(f - r['freq_hz']) < 200000:
+            return c['id']
+    return None
+
+
 def make_cell_files(st, r):
     """Config + minimal meta for a cell found by the scan (run/auto/<id>/); the viewer then runs without the lab-specific overlays."""
     cid = 'scan_g%d_p%d' % (r['gscn'], r['pci'])
@@ -677,8 +690,12 @@ def make_handler(hub, meta_path):
                 r = next((x for x in st.get('results', []) if x.get('gscn') == body.get('gscn') and x.get('pci') == body.get('pci')), None)
                 if st.get('state') != 'done' or r is None:
                     return self._jsend(400, dict(error='no such cell in the last scan'))
-                cid, name, cfg, meta = make_cell_files(st, r)
+                known = known_cell(r)
                 log = open(os.path.join(ROOT, 'run', 'switch.log'), 'ab')
+                if known:                                  # a cell we have a hand-written config + meta (TDD, SSB, CORESET0 overlays) for: use those
+                    subprocess.Popen([os.path.join(ROOT, 'scripts', 'switch.sh'), known], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+                    return self._jsend(202, dict(ok=True, switching=known, known=True))
+                cid, name, cfg, meta = make_cell_files(st, r)
                 subprocess.Popen([os.path.join(ROOT, 'scripts', 'switch.sh'), '--custom', cid, cfg, meta, name], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
                 return self._jsend(202, dict(ok=True, switching=cid))
             # /select: restart nrscope + server on another cell of config/cells.json
