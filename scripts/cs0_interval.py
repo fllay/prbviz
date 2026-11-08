@@ -1,53 +1,56 @@
-import json, base64, time, urllib.request, sys
+#!/usr/bin/env python3
+"""Measure how often CORESET0 (SIB1 / paging / RAR) is actually used, from the live prbviz stream.
+
+usage: cs0_interval.py [seconds=12] [url=http://127.0.0.1:8080]
+
+Nothing about the period is assumed. The CORESET0 PRB range and the nominal occasion slots come from /meta
+(coreset0.prb_lo/prb_hi, slot_idx or cycle_slots). For every nominal occasion the script compares the mean power of the
+CORESET0 PRBs with the PRBs next to them in the same slot; an occasion is ACTIVE above 8 dB (same rule as the viewer).
+It then prints the active frames and the interval histogram, so a 20 ms or a 160 ms SIB1 period shows up as it is.
+"""
+import base64, json, sys, time, urllib.request
 import numpy as np
-DUR = float(sys.argv[1]) if len(sys.argv) > 1 else 10
-req = urllib.request.urlopen('http://127.0.0.1:8080/stream?sym=1', timeout=15)
-t0 = time.time(); slots = {}; NP = S = None; align = 0
-buf = b''
-while time.time() - t0 < DUR:
+
+dur = float(sys.argv[1]) if len(sys.argv) > 1 else 12.0
+base = sys.argv[2] if len(sys.argv) > 2 else 'http://127.0.0.1:8080'
+THR = 8.0
+meta = json.load(urllib.request.urlopen(base + '/meta', timeout=10))
+c0 = meta['coreset0']; spf = meta.get('slots_per_frame', 20)
+if c0.get('cycle_slots'): cand = sorted(set(c % spf for c in c0['cycle_slots']))
+else: cand = sorted(c0['slot_idx'])
+print('CORESET0 PRB %d..%d, nominal slot(s) in frame %s, %d slots/frame' % (c0['prb_lo'], c0['prb_hi'] - 1, cand, spf))
+
+slots = {}; align = 0; lo = 0; NP = 0
+req = urllib.request.urlopen(base + '/stream', timeout=15); t0 = time.time()
+while time.time() - t0 < dur:
     line = req.readline()
     if not line.startswith(b'data: '): continue
-    m = json.loads(line[6:])
-    if 'sym' not in m: continue
-    NP = m['np']; S = m.get('nsym', 14); align = m.get('align', 0); lo = m['lo']
-    u = np.frombuffer(base64.b64decode(m['sym']), dtype=np.uint8).reshape(m['n'], S, NP)
+    m = json.loads(line[6:]); NP = m['np']; lo = m['lo']; align = m.get('align', 0)
+    u = np.frombuffer(base64.b64decode(m['data']), dtype=np.uint8).reshape(m['n'], NP)
     for i in range(m['n']): slots[m['slot0'] + i] = u[i]
 req.close()
-print('captured slots', len(slots), 'NP', NP, 'S', S, 'align', align, 'span', min(slots), max(slots))
-def db(q): return q.astype(np.float32) / 1.8 - 100
-def pw(q):  # mean linear power -> dB, ignoring missing (q==0)
-    v = np.where(q > 0, 10 ** (db(q) / 10), np.nan); return 10 * np.log10(np.nanmean(v))
-A = slice(0, 24); B = slice(24, NP)
-# per (slot-in-frame, frame parity): excess dB of PRBs 0-23 over PRBs 24..NP-1 in PDCCH (sym 0-1) and PDSCH (sym 2-13) regions
-res = {}
-frames = {}
-for a, q in slots.items():
-    sfn = (a + align) // 20; si = (a + align) % 20
-    frames.setdefault(sfn, {})[si] = q
+i0, i1 = max(0, c0['prb_lo'] - lo), min(NP, c0['prb_hi'] - lo)
+j0, j1 = i1, NP
+if j1 - j0 < 4: j0, j1 = 0, i0
+def mean_db(q):
+    q = q[q > 0].astype(np.float64)
+    return 10 * np.log10(np.mean(10 ** ((q / 1.8 - 100) / 10))) if len(q) else np.nan
 rows = []
-for sfn in sorted(frames):
-    fr = frames[sfn]
-    if len(fr) < 20: continue
-    for si in range(20):
-        q = fr[si]
-        if si not in (0, 1, 2): continue
-        e_pdcch = pw(q[0:2, A]) - pw(q[0:2, B])
-        e_pdsch = pw(q[2:14, A]) - pw(q[2:14, B])
-        rows.append((sfn, si, e_pdcch, e_pdsch))
-rows = np.array(rows)
-print('complete frames', len(set(rows[:, 0])))
-for si in (0, 1, 2):
-    r = rows[rows[:, 1] == si]
-    for par in (0, 1):
-        rr = r[(r[:, 0] % 2) == par]
-        print('slot %d  SFN parity %d: n=%d  PDCCH-region excess dB median %.1f p90 %.1f | PDSCH-region excess median %.1f p90 %.1f max %.1f' % (si, par, len(rr), np.median(rr[:, 2]), np.percentile(rr[:, 2], 90), np.median(rr[:, 3]), np.percentile(rr[:, 3], 90), rr[:, 3].max()))
-np.save('/tmp/cs0_rows.npy', rows)
-# detect "SIB1 present" frames: slot 1 PDSCH excess > thr
-sel = rows[rows[:, 1] == 1]
-thr = (np.median(sel[:, 3]) + sel[:, 3].max()) / 2
-hit = sel[sel[:, 3] > max(thr, 6)]
-print('threshold %.1f dB -> hits %d of %d frames' % (max(thr, 6), len(hit), len(sel)))
-hs = hit[:, 0].astype(int)
-print('hit SFNs (first 40):', list(hs[:40]))
-d = np.diff(hs)
-if len(d): print('interval in frames: min %d max %d, histogram %s' % (d.min(), d.max(), dict(zip(*np.unique(d, return_counts=True)))))
+for a, q in slots.items():
+    f, si = divmod(a + align, spf)
+    if si in cand: rows.append((f, si, mean_db(q[i0:i1]) - mean_db(q[j0:j1])))
+rows = np.array(sorted(rows))
+fr_all = len(set(int(r[0]) for r in rows))
+print('captured %.0f ms (%d slots); %d nominal occasions' % (len(slots) * 0.5, len(slots), len(rows)))
+act = rows[rows[:, 2] > THR]
+act_f = sorted(set(int(f) for f in act[:, 0]))
+print('active occasions: %d (excess > %.0f dB: min %.1f, median %.1f, max %.1f);  idle occasions: max excess %.1f dB' % (
+    len(act), THR, act[:, 2].min() if len(act) else 0, np.median(act[:, 2]) if len(act) else 0, act[:, 2].max() if len(act) else 0,
+    rows[rows[:, 2] <= THR][:, 2].max() if (rows[:, 2] <= THR).any() else 0))
+if len(act_f) < 3: print('too few active occasions to estimate a period'); sys.exit(0)
+d = np.diff(act_f); h = dict(zip(*[x.tolist() for x in np.unique(d, return_counts=True)]))
+med = int(np.median(d))
+print('slots in frame with activity:', sorted(set(int(s) for s in act[:, 1])))
+print('interval between active frames (frames -> count):', h)
+print('=> period about %d frame(s) = %d ms; first active SFNs (mod 1024): %s' % (med, med * 10, [f % 1024 for f in act_f[:8]]))
+print('   SFN mod %d values seen: %s' % (med, sorted(set(f % med for f in act_f))) if med > 1 else '   active in every frame')

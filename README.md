@@ -272,11 +272,16 @@ Debug: `NRSCOPE_CFO_DBG=1` prints `SYNCDBG ... cfo_hz delay_us sfn sf` every 200
 
 ## How often is CORESET0 / SIB1 sent?
 
-`scripts/cs0_interval.py [seconds]` captures per-symbol power from the live stream and compares the CORESET0 PRBs (0-23) with the PRBs outside them,
-slot by slot and frame by frame. On the lab testbed (CORESET0 idx 0, SS0 idx 0, SSB every frame) it found the SIB1 PDCCH + PDSCH only in
-slot 1 of frames with SFN mod 16 = 0, i.e. once every 160 ms (the nominal SIB1 period, no repetitions in between): 75 of 75 such frames
-were 10.5 dB or more above the neighbouring PRBs, every other frame stayed at or below 4.9 dB. The dashed CORESET0 box in the viewer is
-the nominal location from the meta file and is drawn in every frame, so most boxes are empty. Paging and RAR also use CORESET0 but only when needed.
+The period is **measured, not assumed**. The viewer compares the CORESET0 PRBs with the PRBs next to them in the same slot; an occasion is
+*active* when the difference is above 8 dB. Active occasions are drawn as a bright, filled cyan box (with the excess in dB when there is room for
+the label), idle ones as a faint dashed box (checkbox "idle CORESET0" hides them), and the legend shows the median distance between active frames,
+for example `CORESET0 / SIB1 - active every 160 ms (16 frames)`. A cell that repeats SIB1 every 20 ms shows `every 20 ms (2 frames)` without any change.
+
+`scripts/cs0_interval.py [seconds]` does the same offline from the live stream and prints the interval histogram. On the lab testbed (CORESET0 idx 0,
+SS0 idx 0, SSB every frame) SIB1 PDCCH + PDSCH is in slot 1 of frames with SFN mod 16 = 0, i.e. once per nominal SIB1 period of 160 ms with no repetitions
+in between (75 of 75 such frames were 10.5 dB or more above the neighbouring PRBs). Other CORESET0 users (RAR / Msg4 of a random access, paging) show up
+as extra active occasions at other SFNs; they are only sent when needed. The meta file only gives the nominal occasion (slot and PRBs), so without the
+activity test most boxes would be empty.
 
 ## Modulation notes
 
