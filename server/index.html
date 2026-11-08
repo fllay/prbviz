@@ -4,20 +4,79 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   :root{color-scheme:dark}
-  body{margin:0;background:#0f1419;color:#d7dde4;font:13px/1.35 system-ui,-apple-system,Segoe UI,sans-serif;overflow:hidden}
-  #bar{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;padding:8px 12px;background:#172029;border-bottom:1px solid #26323d}
-  #bar h1{font-size:14px;margin:0 8px 0 0;font-weight:600}
-  #bar label{display:flex;gap:5px;align-items:center;white-space:nowrap}
-  #bar input[type=number]{width:54px;background:#0f1419;color:#d7dde4;border:1px solid #33414e;border-radius:4px;padding:2px 4px}
-  #bar select,#bar button{background:#0f1419;color:#d7dde4;border:1px solid #33414e;border-radius:4px;padding:3px 8px}
-  #bar button{cursor:pointer}
-  #live{display:inline-block;width:9px;height:9px;border-radius:50%;background:#555;margin-right:5px}
-  #live.on{background:#3ddc84}
-  #stat{margin-left:auto;font-variant-numeric:tabular-nums;color:#9fb0bf}
+  body{margin:0;background:#0f1419;color:#e6edf3;font:13px/1.35 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden;height:100vh;display:flex;flex-direction:column}
+  button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #00e5ff;outline-offset:2px}
+  #bar{flex-shrink:0;background:#0f1419}
+  .r1{display:flex;align-items:center;gap:20px;padding:0 20px;min-height:68px;box-sizing:border-box;border-bottom:1px solid #26313d}
+  .r2{display:flex;align-items:flex-end;flex-wrap:wrap;gap:12px 24px;padding:12px 20px;border-bottom:1px solid #26313d}
+  .k{color:#9fb0bf;font-size:11px;font-weight:600;letter-spacing:.06em;white-space:nowrap}
+  .fld{display:flex;flex-direction:column;gap:3px}
+  .kv{display:flex;flex-direction:column;gap:2px}
+  .kv .v{font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .vsep{width:1px;height:34px;background:#26313d;flex-shrink:0}
+  #live{display:inline-block;width:10px;height:10px;border-radius:50%;background:#555;box-shadow:0 0 0 4px rgba(85,85,85,.2);flex-shrink:0}
+  #live.on{background:#7bdc7b;box-shadow:0 0 0 4px rgba(123,220,123,.2)}
+  body.paused #live{background:#ffb74d;box-shadow:0 0 0 4px rgba(255,183,77,.2)}
+  #ttl{font-weight:700;font-size:15px}
+  .r1{flex-wrap:wrap;row-gap:8px;padding-top:8px;padding-bottom:8px}
+  .r1>div:first-child{flex-shrink:0}
+  #ttl,#cell{white-space:nowrap}
+  #cell{color:#9fb0bf;font-size:12px}
+  #bar select,#bar input[type=number]{height:36px;box-sizing:border-box;background:#161d25;color:#e6edf3;border:1px solid #3a4756;border-radius:6px;padding:0 10px;font:inherit}
+  #bar input[type=number]{width:64px;padding:0 8px;font-variant-numeric:tabular-nums}
+  #cellsel{min-width:320px}
+  #win{width:160px}
+  #scanbtn{display:none;height:36px;padding:0 16px;background:transparent;color:#00e5ff;border:1px solid #00e5ff;border-radius:6px;font:inherit;font-weight:600;cursor:pointer}
+  #stat{margin-left:auto;display:flex;align-items:center;gap:22px}
+  #st_pause{display:none;padding:5px 10px;border-radius:999px;background:#3a2a0a;color:#ffb74d;font-size:12px;font-weight:700;letter-spacing:.06em;white-space:nowrap}
+  #st_note{color:#9fb0bf;font-size:12px;white-space:nowrap}
+  .seg{display:flex;border:1px solid #3a4756;border-radius:6px;overflow:hidden}
+  .seg button{height:34px;padding:0 14px;border:0;background:#161d25;color:#b4c2cf;font:inherit;font-weight:600;cursor:pointer}
+  .seg button+button{border-left:1px solid #3a4756}
+  .seg button[aria-pressed=true]{background:#0c3340;color:#00e5ff}
+  .chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+  .chip{position:relative;height:36px;padding:0 12px;box-sizing:border-box;display:inline-flex;align-items:center;gap:7px;border-radius:6px;border:1px solid #3a4756;background:#161d25;color:#b4c2cf;font-weight:500;cursor:pointer;user-select:none;white-space:nowrap}
+  .chip input{position:absolute;inset:0;margin:0;opacity:0;cursor:pointer}
+  .chip i{width:8px;height:8px;border-radius:2px;opacity:.45}
+  .chip:has(input:checked){background:#0c3340;border-color:#00e5ff;color:#e6fbff}
+  .chip:has(input:checked) i{opacity:1}
+  .chip:has(input:focus-visible){outline:2px solid #00e5ff;outline-offset:2px}
+  #pause{height:40px;min-width:112px;padding:0 20px;border:0;border-radius:6px;font:inherit;font-weight:700;cursor:pointer;background:#00e5ff;color:#04242b}
+  #scrub{display:none;align-items:center;gap:16px;padding:0 20px;height:56px;box-sizing:border-box;background:#121920;border-bottom:1px solid #26313d}
+  #panlab{flex:1;align-items:center;gap:16px}
+  #pan{flex:1;accent-color:#00e5ff;height:24px}
+  #panpos{min-width:190px;font-weight:600;font-variant-numeric:tabular-nums;color:#e6edf3}
+  #cs0nav{align-items:center;gap:12px}
+  #cs0nav button{height:36px;padding:0 12px;display:inline-flex;align-items:center;gap:4px;background:#161d25;color:#e6edf3;border:1px solid #3a4756;border-radius:6px;font:inherit;font-weight:500;cursor:pointer}
+  #cs0nav button svg{stroke:#00e5ff}
+  #cs0nav label,#scrub label{display:inline-flex;align-items:center;gap:8px;cursor:pointer;white-space:nowrap}
+  #cs0nav input[type=checkbox]{width:16px;height:16px;accent-color:#00e5ff;margin:0}
+  #cs0msg{color:#9fb0bf;font-variant-numeric:tabular-nums}
+  #main{flex:1;min-height:0;display:flex}
+  #gridwrap{flex:1;min-width:0;position:relative;overflow:hidden}
+  #gridwrap canvas{position:absolute;left:0;top:0}
+  #side{width:360px;flex-shrink:0;box-sizing:border-box;padding:16px;background:#161d25;border-left:1px solid #26313d;display:flex;flex-direction:column;gap:12px;overflow-y:auto}
+  #side .sh{display:flex;align-items:center;justify-content:space-between}
+  #side .sh b{font-size:16px}
+  #side .sh span.m{color:#9fb0bf;margin-left:8px}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-weight:700;font-size:12px;letter-spacing:.04em}
+  .pill.ok{background:#12331a;color:#7bdc7b}
+  .pill.ko{background:#3a2a0a;color:#ffb74d}
+  .pill.wait{background:#222d38;color:#9fb0bf}
+  .pill.ko svg,.pill.wait svg{display:none}
+  .sg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  .sg .v{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+  #ccv{display:block;width:328px;height:328px;flex-shrink:0;background:#0f1419;border:1px solid #26313d;border-radius:8px}
+  .lg{display:flex;align-items:center;gap:16px;color:#b4c2cf;font-size:12px;flex-wrap:wrap}
+  .lg span{display:inline-flex;align-items:center;gap:6px}
+  .lg i{width:9px;height:9px;border-radius:50%;box-sizing:border-box}
+  .mib{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px}
+  .mib div{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-bottom:1px solid #222d38}
+  .mib div span:first-child{color:#9fb0bf;font-size:11px}
+  .mib div span+span{font-weight:600;font-variant-numeric:tabular-nums}
   #hover{position:fixed;bottom:6px;left:50px;color:#c9d6e2;font-variant-numeric:tabular-nums;pointer-events:none}
   canvas{display:block}
   #banner{position:fixed;top:45%;left:50%;transform:translate(-50%,-50%);background:#172029;border:1px solid #3a5a78;border-radius:8px;padding:16px 26px;color:#e6edf3;font-size:14px;text-align:center;display:none;z-index:9;max-width:70vw}
-  #scanbtn{display:none}
   #scanbox{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#172029;border:1px solid #3a5a78;border-radius:8px;padding:14px 18px;color:#e6edf3;font-size:13px;display:none;z-index:10;width:min(900px,92vw);max-height:86vh;overflow:auto;box-shadow:0 8px 40px #000a}
   #scanbox h2{margin:0 0 8px;font-size:15px} #scanbox .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:6px 0}
   #scanbox table{border-collapse:collapse;width:100%;margin-top:8px} #scanbox th,#scanbox td{border-bottom:1px solid #2a3a4a;padding:4px 8px;text-align:left;white-space:nowrap} #scanbox th{color:#9fb0bf;font-weight:600}
@@ -28,37 +87,91 @@
 </style></head>
 <body>
 <div id="bar">
-  <h1><span id="live"></span>NR-Scope live PRB grid</h1>
-  <span id="cell"></span>
-  <button id="scanbtn" title="Search a band for cells, read their PLMN, and choose one to view (stops the live view while scanning)">Scan…</button>
-  <label id="cellselL" style="display:none" title="Switching restarts nrscope and the SDR for everybody watching this server">cell <select id="cellsel"></select></label>
-  <label>window <select id="win">
-    <option value="4">4 slots (2 ms)</option><option value="10">10 slots (5 ms)</option><option value="20">20 slots (10 ms)</option>
-    <option value="40">40 slots (20 ms)</option><option value="100">100 slots (50 ms)</option><option value="200">200 slots (100 ms)</option>
-    <option value="400" selected>400 slots (200 ms)</option><option value="800">800 slots (400 ms)</option>
-    <option value="1600">1600 slots (800 ms)</option></select></label>
-  <label>view <select id="view"><option value="slot" selected>per slot (average)</option><option value="sym">per symbol</option></select></label>
-  <label>dB min <input id="dbmin" type="number" value="-15" step="1"></label>
-  <label>max <input id="dbmax" type="number" value="30" step="1"></label>
-  <label><input id="ov_tdd" type="checkbox" checked>TDD</label>
-  <label><input id="ov_ssb" type="checkbox" checked>SSB</label>
-  <label><input id="ov_ssbd" type="checkbox" checked>PSS/SSS/PBCH</label>
-  <label><input id="ov_cs0" type="checkbox" checked>CORESET0/SIB1</label>
-  <label title="also draw the CORESET0 occasions where nothing was sent (faint)"><input id="ov_cs0i" type="checkbox" checked>idle CORESET0</label>
-  <label title="per-symbol view, zoomed in: REG bundles, CCE numbers (interleaved) and the DMRS positions inside CORESET0; bright = bundle carries PDCCH"><input id="ov_reg" type="checkbox" checked>REG/CCE/DMRS</label>
-  <label><input id="ov_frm" type="checkbox" checked>SFN/slots</label>
-  <label><input id="ov_const" type="checkbox" checked>PBCH constellation</label>
-  <button id="pause">Pause</button>
-  <label id="panlab" style="display:none" title="drag the plot, mouse wheel / shift+wheel, or arrow keys also scroll (Shift = half window, Home/End = oldest/newest)">scroll <input id="pan" type="range" min="0" max="0" value="0" step="1" style="width:320px"> <span id="panpos" style="min-width:150px;font-variant-numeric:tabular-nums;color:#9fb0bf"></span></label>
-  <span id="cs0nav" style="display:none;gap:8px;align-items:center">
-    <button id="cs0prev" title="scroll to the previous active CORESET0 / SIB1 occasion in the frozen history  ( [ )">&#9664; CORESET0</button>
-    <button id="cs0next" title="scroll to the next active CORESET0 / SIB1 occasion  ( ] )">CORESET0 &#9654;</button>
-    <label title="when you press Pause, scroll to the newest active CORESET0 occasion"><input id="cs0jump" type="checkbox" checked>jump on pause</label>
-    <span id="cs0msg" style="color:#9fb0bf;font-variant-numeric:tabular-nums"></span>
-  </span>
-  <span id="stat"></span>
+  <div class="r1">
+    <div style="display:flex;align-items:center;gap:12px">
+      <span id="live"></span>
+      <div class="kv"><span id="ttl">NR-Scope live PRB grid</span><span id="cell"></span></div>
+    </div>
+    <div class="vsep"></div>
+    <div style="display:flex;align-items:flex-end;gap:12px">
+      <label class="fld" id="cellselL" style="display:none" title="Switching restarts nrscope and the SDR for everybody watching this server"><span class="k">CELL</span><select id="cellsel"></select></label>
+      <button id="scanbtn" title="Search a band for cells, read their PLMN, and choose one to view (stops the live view while scanning)">Scan for cells…</button>
+    </div>
+    <div id="stat">
+      <div class="kv"><span class="k">SFN / SLOT</span><span class="v" id="st_sfn">–</span></div>
+      <div class="kv"><span class="k">GAIN</span><span class="v" id="st_gain">–</span></div>
+      <div class="kv"><span class="k">RATE</span><span class="v" id="st_rate">–</span></div>
+      <div class="kv"><span class="k">MISSING</span><span class="v" id="st_miss" style="color:#7bdc7b">0</span></div>
+      <div class="kv"><span class="k">ALIGN</span><span class="v" id="st_align">–</span></div>
+      <span id="st_note"></span>
+      <span id="st_pause">PAUSED</span>
+    </div>
+  </div>
+  <div class="r2">
+    <label class="fld"><span class="k">WINDOW</span><select id="win">
+      <option value="4">4 slots (2 ms)</option><option value="10">10 slots (5 ms)</option><option value="20">20 slots (10 ms)</option>
+      <option value="40">40 slots (20 ms)</option><option value="100">100 slots (50 ms)</option><option value="200">200 slots (100 ms)</option>
+      <option value="400" selected>400 slots (200 ms)</option><option value="800">800 slots (400 ms)</option>
+      <option value="1600">1600 slots (800 ms)</option></select></label>
+    <div class="fld"><span class="k">VIEW</span>
+      <div class="seg" role="group" aria-label="View">
+        <button id="vslot" type="button" aria-pressed="true" title="average power per slot">Per slot</button><button id="vsym" type="button" aria-pressed="false" title="power per OFDM symbol">Per symbol</button>
+      </div>
+      <select id="view" hidden><option value="slot" selected>per slot (average)</option><option value="sym">per symbol</option></select>
+    </div>
+    <div class="fld"><span class="k">COLOUR SCALE (dB)</span>
+      <div style="display:flex;align-items:center;gap:6px">
+        <input id="dbmin" type="number" value="-15" step="1" aria-label="Colour scale minimum, dB"><span style="color:#9fb0bf">to</span><input id="dbmax" type="number" value="30" step="1" aria-label="Colour scale maximum, dB">
+      </div>
+    </div>
+    <div class="vsep" style="height:40px"></div>
+    <div class="fld"><span class="k">OVERLAYS</span>
+      <div class="chips">
+      <label class="chip"><input id="ov_tdd" type="checkbox" checked><i style="background:#4da3ff"></i>TDD</label>
+      <label class="chip"><input id="ov_frm" type="checkbox" checked><i style="background:#9fb0bf"></i>SFN / slots</label>
+      <label class="chip"><input id="ov_ssb" type="checkbox" checked><i style="background:#ffffff"></i>SSB</label>
+      <label class="chip"><input id="ov_ssbd" type="checkbox" checked><i style="background:#ff9f43"></i>PSS / SSS / PBCH</label>
+      <label class="chip"><input id="ov_cs0" type="checkbox" checked><i style="background:#00e5ff"></i>CORESET0 / SIB1</label>
+      <label class="chip" title="also draw the CORESET0 occasions where nothing was sent (faint)"><input id="ov_cs0i" type="checkbox" checked><i style="background:#4fa9b8"></i>Idle CORESET0</label>
+      <label class="chip" title="per-symbol view, zoomed in: REG bundles, CCE numbers (interleaved) and the DMRS positions inside CORESET0; bright = bundle carries PDCCH"><input id="ov_reg" type="checkbox" checked><i style="background:#00e5ff"></i>REG / CCE / DMRS</label>
+      <label class="chip" title="show the PBCH constellation and decoded MIB panel on the right"><input id="ov_const" type="checkbox" checked><i style="background:#7bdc7b"></i>PBCH constellation</label>
+      </div>
+    </div>
+    <div style="flex:1"></div>
+    <button id="pause" type="button">Pause</button>
+  </div>
+  <div id="scrub">
+    <label id="panlab" style="display:none" title="drag the plot, mouse wheel / shift+wheel, or arrow keys also scroll (Shift = half window, Home/End = oldest/newest)"><span class="k">SCROLL BACK</span><input id="pan" type="range" min="0" max="0" value="0" step="1"><span id="panpos"></span></label>
+    <span id="cs0nav" style="display:none">
+      <button id="cs0prev" type="button" title="scroll to the previous active CORESET0 / SIB1 occasion in the frozen history  ( [ )"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>Previous CORESET0</button>
+      <button id="cs0next" type="button" title="scroll to the next active CORESET0 / SIB1 occasion  ( ] )">Next CORESET0<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+      <label title="when you press Pause, scroll to the newest active CORESET0 occasion"><input id="cs0jump" type="checkbox" checked>Jump to CORESET0 on pause</label>
+      <span id="cs0msg"></span>
+    </span>
+  </div>
 </div>
-<canvas id="cv"></canvas>
+<div id="main">
+  <div id="gridwrap"><canvas id="cv"></canvas></div>
+  <aside id="side" aria-label="PBCH constellation and decoded MIB">
+    <div class="sh"><div><b>PBCH</b><span class="m" id="sd_mod"></span></div>
+      <span class="pill wait" id="sd_pill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg><span id="sd_crc">Waiting</span></span></div>
+    <div class="sg">
+      <div class="kv"><span class="k">EVM</span><span class="v" id="sd_evm">–</span></div>
+      <div class="kv"><span class="k">SYMBOLS</span><span class="v" id="sd_n">–</span></div>
+      <div class="kv"><span class="k">UPDATED</span><span class="v" id="sd_age">–</span></div>
+    </div>
+    <canvas id="ccv" role="img" aria-label="PBCH constellation scatter plot"></canvas>
+    <div class="lg">
+      <span><i style="background:#7bdc7b"></i>CRC OK</span>
+      <span><i style="background:#ff9f43"></i>CRC failed</span>
+      <span><i style="border:1.5px dashed #00e5ff"></i>Ideal point</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:2px">
+      <span class="k" style="margin-top:4px">DECODED MIB</span>
+      <div class="mib"><div><span>SFN</span><span id="sd_m0">–</span></div><div><span>SSB index</span><span id="sd_m1">–</span></div><div><span>SCS</span><span id="sd_m2">–</span></div><div><span>k_SSB</span><span id="sd_m3">–</span></div><div><span>DM-RS typeA pos</span><span id="sd_m4">–</span></div><div><span>Half frame</span><span id="sd_m5">–</span></div><div><span>CORESET0 idx</span><span id="sd_m6">–</span></div><div><span>SearchSpace0 idx</span><span id="sd_m7">–</span></div><div><span>Cell barred</span><span id="sd_m8">–</span></div><div><span>Intra-freq reselection</span><span id="sd_m9">–</span></div></div>
+    </div>
+  </aside>
+</div>
 <div id="hover"></div>
 <div id="scanbox">
   <h2>Cell scan (nrscan + SIB1)</h2>
@@ -120,6 +233,48 @@ buildLut();
 
 function $(id){ return document.getElementById(id); }
 function b64(s){ var bin = atob(s), n = bin.length, u = new Uint8Array(n); for (var i = 0; i < n; i++) u[i] = bin.charCodeAt(i); return u; }
+
+// ---- PBCH constellation + decoded MIB: docked panel right of the grid (equalised QPSK symbols from nrscope's PBCH decoder, one frame per SSB; newest frames brightest)
+var sideCv = $('ccv'), sideCtx = sideCv.getContext('2d'), sideTxt = {};
+function setTxt(id, t){ if (sideTxt[id] !== t) { sideTxt[id] = t; $(id).textContent = t; } }
+function drawSide(){
+  if (!iqOn) return;
+  var cs = 328, dpr = window.devicePixelRatio || 1, pxs = Math.round(cs * dpr), c = sideCtx, i, j;
+  if (sideCv.width !== pxs) { sideCv.width = pxs; sideCv.height = pxs; }
+  c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, cs, cs);
+  var half = cs / 2, pad = 14, rng = 1.5, u = (half - pad) / rng;
+  var lastS = sibQ.length ? sibQ[sibQ.length - 1] : null, mb = null;
+  for (i = sibQ.length - 1; i >= 0; i--) if (sibQ[i].mib) { mb = sibQ[i].mib; break; }
+  c.lineWidth = 1; c.strokeStyle = '#1d2833'; c.beginPath();
+  [-1, -0.5, 0.5, 1].forEach(function(v){ var p = Math.round(half + v * u) + 0.5; c.moveTo(p, pad); c.lineTo(p, cs - pad); c.moveTo(pad, p); c.lineTo(cs - pad, p); });
+  c.stroke();
+  c.strokeStyle = '#3a4756'; c.beginPath(); c.moveTo(half + 0.5, pad); c.lineTo(half + 0.5, cs - pad); c.moveTo(pad, half + 0.5); c.lineTo(cs - pad, half + 0.5); c.stroke();
+  c.fillStyle = '#9fb0bf'; c.font = '11px system-ui'; c.textAlign = 'right'; c.fillText('I', cs - pad - 2, half - 6); c.textAlign = 'left'; c.fillText('Q', half + 6, pad + 10);
+  if (!lastS || lastS.mod === 2) {                                         // ideal QPSK points
+    c.strokeStyle = '#00e5ff'; c.lineWidth = 1.4; c.setLineDash([3, 3]);
+    [-1, 1].forEach(function(ix){ [-1, 1].forEach(function(iy){ c.beginPath(); c.arc(half + ix * 0.7071 * u, half - iy * 0.7071 * u, u * 0.16, 0, 6.2832); c.stroke(); }); });
+    c.setLineDash([]);
+  }
+  for (i = 0; i < sibQ.length; i++) {
+    var pts = sibQ[i].pts;
+    c.fillStyle = sibQ[i].crc ? '#7bdc7b' : '#ff9f43'; c.globalAlpha = 0.15 + 0.75 * (i + 1) / sibQ.length;
+    for (j = 0; j < pts.length; j++) {
+      var x = half + pts[j][0] * u, y = half - pts[j][1] * u;
+      if (x > 2 && x < cs - 2 && y > 2 && y < cs - 2) c.fillRect(x - 1.3, y - 1.3, 2.6, 2.6);
+    }
+  }
+  c.globalAlpha = 1;
+  if (!lastS) { c.fillStyle = '#9fb0bf'; c.font = '12px system-ui'; c.textAlign = 'center'; c.fillText('Waiting for a PBCH decode…', half, cs - 22); }
+  setTxt('sd_mod', lastS ? ({1: 'BPSK', 2: 'QPSK', 4: '16QAM', 6: '64QAM', 8: '256QAM'}[lastS.mod] || ('mod ' + lastS.mod)) : '');
+  var pill = $('sd_pill'), pc = lastS ? (lastS.crc ? 'pill ok' : 'pill ko') : 'pill wait';
+  if (pill.className !== pc) pill.className = pc;
+  setTxt('sd_crc', lastS ? (lastS.crc ? 'CRC OK' : 'CRC failed') : 'Waiting');
+  setTxt('sd_evm', lastS && lastS.evm != null ? lastS.evm.toFixed(0) + ' %' : '–');
+  setTxt('sd_n', lastS ? String(lastS.n) : '–');
+  setTxt('sd_age', lastS ? ((performance.now() - lastS.at) / 1000).toFixed(1) + ' s' : '–');
+  var f = mb ? [mb.sfn, mb.ssb, mb.scs + ' kHz', mb.kssb, mb.dmrs, mb.hrf, mb.cs0, mb.ss0, mb.barred ? 'yes' : 'no', mb.intra ? 'allowed' : 'not allowed'] : [];
+  for (i = 0; i < 10; i++) setTxt('sd_m' + i, mb ? String(f[i]) : '–');
+}
 
 // ---- data in
 function setMeta(m){ meta = m; if (m.name) $('cell').textContent = m.name + ' | PCI ' + m.pci + ' | ' + m.scs_khz + ' kHz SCS' + (m.scanned ? ' | no slot/TDD alignment' : ''); }
@@ -259,7 +414,7 @@ if (!window.__DEMO) loadCells();
 
 // ---- controls
 $('win').onchange = function(){ W = +this.value; };
-$('ov_const').onchange = function(){ iqOn = this.checked; if (!iqOn) sibQ = []; if (!window.__DEMO) openStream(); };
+$('ov_const').onchange = function(){ iqOn = this.checked; $('side').style.display = iqOn ? '' : 'none'; if (!iqOn) sibQ = []; if (!window.__DEMO) openStream(); };
 $('view').onchange = function(){
   symOn = this.value === 'sym';
   if (symOn && W > 100) { W = 20; $('win').value = '20'; }
@@ -268,6 +423,10 @@ $('view').onchange = function(){
   img = null;
   if (!window.__DEMO) openStream();
 };
+function viewBtns(){ var sym = $('view').value === 'sym'; $('vslot').setAttribute('aria-pressed', String(!sym)); $('vsym').setAttribute('aria-pressed', String(sym)); }
+(function(){ var vc = $('view').onchange; $('view').onchange = function(){ vc.call(this); viewBtns(); }; })();
+$('vslot').onclick = function(){ if ($('view').value !== 'slot') { $('view').value = 'slot'; $('view').onchange(); } };
+$('vsym').onclick = function(){ if ($('view').value !== 'sym') { $('view').value = 'sym'; $('view').onchange(); } };
 $('dbmin').onchange = function(){ dbMin = +this.value; buildLut(); };
 $('dbmax').onchange = function(){ dbMax = +this.value; buildLut(); };
 $('pause').onclick = function(){
@@ -278,6 +437,7 @@ $('pause').onclick = function(){
   } else snap = null;
   panOff = 0; panDrag = null;
   var on = paused && !!snap;
+  document.body.classList.toggle('paused', paused); $('scrub').style.display = on ? 'flex' : 'none';
   $('panlab').style.display = on ? 'flex' : 'none'; cv.classList.toggle('pannable', on); cv.classList.remove('panning');
   $('cs0nav').style.display = (on && meta.coreset0) ? 'flex' : 'none';
   if (on && meta.coreset0 && $('cs0jump').checked) cs0Go(0);
@@ -340,8 +500,8 @@ setInterval(function(){ rate = rxSlots - lastRx; lastRx = rxSlots; }, 1000);
 
 // ---- geometry
 function layout(){
-  var dpr = window.devicePixelRatio || 1, bar = $('bar').offsetHeight;
-  var w = window.innerWidth, h = window.innerHeight - bar;
+  var dpr = window.devicePixelRatio || 1, wrap = $('gridwrap');
+  var w = Math.max(200, wrap.clientWidth), h = Math.max(200, wrap.clientHeight);
   cv.style.width = w + 'px'; cv.style.height = h + 'px';
   cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -351,7 +511,7 @@ function layout(){
   G = { w: w, h: h, px: px, py: py, pw: pw, ph: ph, ty: py + ph + gap, th: th, ly: h - 8 };
 }
 window.addEventListener('resize', layout); layout();
-new ResizeObserver(layout).observe($('bar'));
+new ResizeObserver(layout).observe($('gridwrap'));
 
 cv.addEventListener('mousemove', function(e){ var r = cv.getBoundingClientRect(); mouse = { x: e.clientX - r.left, y: e.clientY - r.top }; });
 cv.addEventListener('mouseleave', function(){ mouse = null; $('hover').textContent = ''; });
@@ -602,7 +762,6 @@ function draw(){
     var t = 'MIB: CORESET0 idx ' + mb.cs0 + ' \u00b7 SS0 idx ' + mb.ss0 + ' \u00b7 SCS ' + mb.scs + ' kHz' + (meta.coreset0 && meta.coreset0.derived ? ' (' + (meta.coreset0.prb_hi - meta.coreset0.prb_lo) + ' PRB × ' + meta.coreset0.nsym + ' sym)' : '') + (mb.barred ? ' \u00b7 CELL BARRED' : '');
     ctx.save(); ctx.font = 'bold 10px system-ui';
     var w = ctx.measureText(t).width + 8, yy = Math.max(G.py + 12, y), rl = G.px + G.pw - 2;
-    if (iqOn && $('ov_const').checked && yy - 11 < G.py + 8 + 276) rl = G.px + G.pw - 258 - 4;      // stay left of the constellation panel
     var xx = Math.max(G.px + 2, Math.min(x, rl - w));
     ctx.fillStyle = 'rgba(15,20,25,0.88)'; ctx.fillRect(xx, yy - 11, w, 14);
     ctx.strokeStyle = '#ff9f43'; ctx.lineWidth = 1; ctx.strokeRect(xx + 0.5, yy - 10.5, w - 1, 13);
@@ -759,49 +918,17 @@ function draw(){
   ctx.fillStyle = '#9fb0bf'; ctx.font = '11px system-ui';
   if (meta.tdd) ctx.fillText('period ' + pms + ' ms (' + tdd.period_slots + ' slots @ ' + (meta.scs_khz || 30) + ' kHz)  \u00b7  D downlink  \u00b7  U uplink  \u00b7  S special = ' + sd + ' DL + ' + (14 - sd - su) + ' flex + ' + su + ' UL symbols', G.px, G.ly - 19);
 
-  // PBCH constellation (equalised QPSK symbols from nrscope's PBCH decoder, one frame per SSB; newest frames brightest)
-  if (iqOn && $('ov_const').checked) {
-    var cs = 170, cwid = 250, chgt = cs + 106, cx0 = G.px + G.pw - cwid - 8, cy0 = G.py + 8;
-    ctx.fillStyle = 'rgba(15,20,25,0.88)'; ctx.fillRect(cx0, cy0, cwid, chgt);
-    ctx.strokeStyle = '#33414e'; ctx.lineWidth = 1; ctx.strokeRect(cx0 + 0.5, cy0 + 0.5, cwid, chgt);
-    var lastS = sibQ.length ? sibQ[sibQ.length - 1] : null;
-    var bx0 = cx0 + (cwid - cs) / 2, by0 = cy0 + 34, half = cs / 2, rng = 1.6;
-    ctx.strokeStyle = '#26323d'; ctx.strokeRect(bx0 + 0.5, by0 + 0.5, cs, cs);
-    ctx.beginPath(); ctx.moveTo(bx0, by0 + half); ctx.lineTo(bx0 + cs, by0 + half); ctx.moveTo(bx0 + half, by0); ctx.lineTo(bx0 + half, by0 + cs); ctx.stroke();
-    if (!lastS || lastS.mod === 2) {                                       // ideal QPSK points
-      ctx.strokeStyle = 'rgba(255,255,255,0.65)';
-      [-1, 1].forEach(function(ix){ [-1, 1].forEach(function(iy){ ctx.beginPath(); ctx.arc(bx0 + half + ix * 0.7071 * half / rng, by0 + half - iy * 0.7071 * half / rng, 4, 0, 6.2832); ctx.stroke(); }); });
-    }
-    for (var qi = 0; qi < sibQ.length; qi++) {
-      var pts = sibQ[qi].pts, al = 0.15 + 0.6 * (qi + 1) / sibQ.length;
-      ctx.fillStyle = sibQ[qi].crc ? '#7bdc7b' : '#ffb74d'; ctx.globalAlpha = al;
-      for (var pk = 0; pk < pts.length; pk++) {
-        var px2 = bx0 + half + pts[pk][0] * half / rng, py2 = by0 + half - pts[pk][1] * half / rng;
-        if (px2 > bx0 && px2 < bx0 + cs && py2 > by0 && py2 < by0 + cs) ctx.fillRect(px2 - 1, py2 - 1, 2.4, 2.4);
-      }
-      ctx.globalAlpha = 1;
-    }
-    ctx.textAlign = 'left'; ctx.font = 'bold 11px system-ui'; ctx.fillStyle = '#e6edf3';
-    var modName = lastS ? ({1: 'BPSK', 2: 'QPSK', 4: '16QAM', 6: '64QAM', 8: '256QAM'}[lastS.mod] || ('mod ' + lastS.mod)) : '';
-    ctx.fillText('PBCH' + (lastS ? '  ' + modName + '  CRC ' + (lastS.crc ? 'OK' : 'KO') : ''), cx0 + 10, cy0 + 15);
-    ctx.font = '10px system-ui'; ctx.fillStyle = '#9fb0bf';
-    ctx.fillText(lastS ? (lastS.evm != null ? 'EVM ' + lastS.evm.toFixed(0) + '%   ' : '') + lastS.n + ' symbols  \u00b7  ' + ((performance.now() - lastS.at) / 1000).toFixed(1) + ' s ago' : 'waiting for a PBCH decode...', cx0 + 10, cy0 + 28);
-    var mb = lastS && lastS.mib;
-    ctx.fillStyle = '#e6edf3'; ctx.font = 'bold 10px system-ui';
-    ctx.fillText(mb ? 'MIB  SFN ' + mb.sfn + '  \u00b7  SSB idx ' + mb.ssb + '  \u00b7  SCS ' + mb.scs + ' kHz' : 'MIB: waiting for a PBCH with CRC OK', cx0 + 10, by0 + cs + 16);
-    ctx.font = '10px system-ui'; ctx.fillStyle = '#9fb0bf';
-    if (mb) {
-      ctx.fillText('k_SSB ' + mb.kssb + '  \u00b7  DM-RS typeA pos ' + mb.dmrs + '  \u00b7  half frame ' + mb.hrf, cx0 + 10, by0 + cs + 30);
-      ctx.fillText('CORESET0 idx ' + mb.cs0 + '  \u00b7  SearchSpace0 idx ' + mb.ss0, cx0 + 10, by0 + cs + 44);
-      ctx.fillText('cell barred: ' + (mb.barred ? 'yes' : 'no') + '  \u00b7  intra-freq reselection: ' + (mb.intra ? 'allowed' : 'not allowed'), cx0 + 10, by0 + cs + 58);
-    }
-    ctx.fillText('green = CRC OK, orange = CRC failed', cx0 + 10, cy0 + chgt - 6);
-    ctx.textAlign = 'left';
-  }
+  drawSide();
 
   // status + hover
   var nsa = vNewest + sh, sfn = Math.floor(nsa / spf) % 1024;
-  $('stat').textContent = 'SFN ' + sfn + ' slot ' + (nsa % spf) + (serverAlign ? '  |  slot align ' + (serverShift > 0 ? '+' : '') + serverShift + ' (server, ' + (serverMode === 'ul' ? 'UL slot' : serverMode === 'none' ? 'none' : 'SSB') + ')' : calOk ? '  |  slot align ' + (sh > 0 ? '+' : '') + sh + ' (auto, SSB)' : '  |  aligning...') + '  |  gain ' + lastGain.toFixed(1) + ' dB  |  ' + rate + ' slots/s  |  missing ' + missing + (symOn ? (s.sym ? '  |  symbol view' : '  |  symbol view: waiting') : '') + (paused ? '  |  PAUSED' + (panOff ? ' (scrolled \u2212' + (panOff * slotMs()).toFixed(1) + ' ms)' : '') : '');
+  setTxt('st_sfn', sfn + ' / ' + (nsa % spf));
+  setTxt('st_gain', lastGain.toFixed(1) + ' dB');
+  setTxt('st_rate', rate + ' slots/s');
+  setTxt('st_miss', String(missing)); $('st_miss').style.color = missing ? '#ffb74d' : '#7bdc7b';
+  setTxt('st_align', serverAlign ? (serverShift > 0 ? '+' : '') + serverShift + ' · server, ' + (serverMode === 'ul' ? 'UL slot' : serverMode === 'none' ? 'none' : 'SSB') : calOk ? (sh > 0 ? '+' : '') + sh + ' · auto, SSB' : 'aligning…');
+  setTxt('st_note', symOn ? (s.sym ? 'symbol view' : 'symbol view: waiting') : '');
+  $('st_pause').style.display = paused ? 'inline-block' : 'none';
   if (mouse && mouse.x >= G.px && mouse.x < G.px + G.pw && mouse.y >= G.py && mouse.y < G.py + G.ph) {
     var jj = Math.floor((mouse.x - G.px) / cw), hsym = useSym ? Math.floor(((mouse.x - G.px) / cw - jj) * S) : -1, pr = LO + Math.floor((G.py + G.ph - mouse.y) / rh), ab = left + jj, cl = ((ab % R) + R) % R, ab2 = ab + sh;
     var ok = s.abs[cl] === ab, qv = ok ? (useSym ? (s.symOk[cl] ? s.sym[(cl * S + hsym) * NP + (pr - LO)] : 0) : s.ring[cl * NP + (pr - LO)]) : 0;
