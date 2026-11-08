@@ -143,7 +143,8 @@ implements it in this source tree. They were checked by grepping the code, not b
             ▼
 ┌─────────────────────────┐   srsran_pbch_nr_decode()                   (extract, equalise, demod, polar, CRC)
 │ PBCH extract, equalise, │   called by ssb_decode_pbch()               (ssb.c)
-│ demod, BCH decode       │   constellation tap: srsran_pbch_nr_const_cb → pbch_const_tap()   (pbch_nr.c, prb_power_dump.cc, added)└───────────┬─────────────┘
+│ demod, BCH decode       │   constellation tap: srsran_pbch_nr_const_cb → pbch_const_tap()   (pbch_nr.c, prb_power_dump.cc, added)
+└───────────┬─────────────┘
             ▼
 ┌─────────────────────────┐   srsran_pbch_msg_nr_mib_unpack()           (nrscope task_scheduler.cc)
 │ MIB                     │
