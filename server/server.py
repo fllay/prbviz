@@ -185,7 +185,7 @@ class Hub:
         sock.setsockopt(zmq.SUBSCRIBE, b'prb')
         sock.setsockopt(zmq.SUBSCRIBE, b'sym')
         sock.setsockopt(zmq.SUBSCRIBE, b'iq')
-        sock.setsockopt(zmq.SUBSCRIBE, b'sib1c')
+        sock.setsockopt(zmq.SUBSCRIBE, b'pbchc')
         sock.connect(endpoint)             # nrscope BINDs; we may start before or after it and reconnect automatically
         while True:
             parts = sock.recv_multipart()
@@ -196,8 +196,8 @@ class Hub:
                 self.ingest_sym(parts[1])
             elif parts[0] == b'iq':
                 self.ingest_iq(parts[1])
-            elif parts[0] == b'sib1c':
-                self.ingest_sib1c(parts[1])
+            elif parts[0] == b'pbchc':
+                self.ingest_pbchc(parts[1])
             else:
                 self.ingest(parts[1])
 
@@ -217,15 +217,15 @@ class Hub:
             self.nsym = nsym
             self.srows[abs_slot] = d[HDR.size:HDR.size + nsym * npr]
 
-    def ingest_sib1c(self, d):
-        """Equalised SIB1 PDSCH symbols from nrscope's SIB1 decoder -> constellation frame for the browsers (<= 10/s)."""
+    def ingest_pbchc(self, d):
+        """Equalised PBCH symbols (432 QPSK points per SSB) from nrscope's PBCH decoder -> constellation frame for the browsers (<= 10/s)."""
         if np is None or not self.iq_clients or len(d) < 26:
             return
         now = time.time()
         if now - self.sib_last < 0.1:
             return
         magic, ver, flags, abs_slot, sfn, slot_idx, _r, gain, n, _z = HDR.unpack_from(d, 0)
-        if magic != 0x5052 or ver != 5 or len(d) < 26 + 2 * n or n == 0:
+        if magic != 0x5052 or ver != 6 or len(d) < 26 + 2 * n or n == 0:
             self.stat['bad'] += 1
             return
         self.sib_last = now
@@ -240,14 +240,11 @@ class Hub:
             evm = float(np.sqrt(np.mean(np.abs(q - ideal) ** 2)) * 100)
         step = max(1, n // 900)
         pts = [[round(float(v.real), 2), round(float(v.imag), 2)] for v in p[::step]]
-        msg = dict(sib1=dict(pts=pts, n=int(n), mod=int(mod), crc=int(flags & 1), evm=None if evm is None else round(evm, 1),
+        msg = dict(pbch=dict(pts=pts, n=int(n), mod=int(mod), crc=int(flags & 1), evm=None if evm is None else round(evm, 1),
                              evm_rx=round(float(evm_rx), 3), sfn=int(sfn), slot=int(slot_idx), abs=int(abs_slot)))
         line = json.dumps(msg, separators=(',', ':'))
         self.sib_cache.append((now, msg))
-        # keep the 6 best (lowest EVM) frames of the last 5 minutes: the grid timing drifts, so only early frames are clean
-        keep = [x for x in self.sib_cache if now - x[0] < 300]
-        keep.sort(key=lambda x: x[1]['sib1']['evm'] if x[1]['sib1']['evm'] is not None else 999)
-        self.sib_cache = sorted(keep[:6], key=lambda x: x[0])
+        self.sib_cache = self.sib_cache[-4:]            # PBCH is decoded every SSB period: the newest frames are enough to fill a new page
         with self.cl_lock:
             for q_ in list(self.clients):
                 if getattr(q_, 'iq', False):
@@ -487,7 +484,7 @@ def make_handler(hub, meta_path):
                 q.iq = 'iq=1' in self.path
                 if q.iq:
                     for t_, m_ in list(hub.sib_cache):          # replay the last SIB1 constellations (they only exist while the grid timing is good)
-                        mm = dict(sib1=dict(m_['sib1'], age=round(time.time() - t_, 1)))
+                        mm = dict(pbch=dict(m_['pbch'], age=round(time.time() - t_, 1)))
                         q.put_nowait(json.dumps(mm, separators=(',', ':')))
                 with hub.cl_lock:
                     hub.clients.append(q)

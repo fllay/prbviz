@@ -613,6 +613,8 @@ int srsran_pbch_nr_encode(srsran_pbch_nr_t*           q,
   return SRSRAN_SUCCESS;
 }
 
+void (*srsran_pbch_nr_const_cb)(const cf_t* symbols, uint32_t nof_symbols, bool crc_ok) = NULL;
+
 int srsran_pbch_nr_decode(srsran_pbch_nr_t*           q,
                           const srsran_pbch_nr_cfg_t* cfg,
                           const cf_t                  ssb_grid[SRSRAN_SSB_NOF_RE],
@@ -673,6 +675,9 @@ int srsran_pbch_nr_decode(srsran_pbch_nr_t*           q,
 
   // 7.1.3 Transport block CRC attachment
   msg->crc = srsran_crc_match(&q->crc, b, PBCH_NR_A);
+  if (srsran_pbch_nr_const_cb != NULL) {
+    srsran_pbch_nr_const_cb(symbols, PBCH_NR_M, msg->crc);
+  }
   PBCH_NR_DEBUG_RX("crc=%s", msg->crc ? "OK" : "KO");
 
   // 7.1.2 Scrambling

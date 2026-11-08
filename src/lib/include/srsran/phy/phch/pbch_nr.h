@@ -105,4 +105,9 @@ SRSRAN_API int srsran_pbch_nr_decode(srsran_pbch_nr_t*           q,
                                      const cf_t                  ce[SRSRAN_SSB_NOF_RE],
                                      srsran_pbch_msg_nr_t*       msg);
 
+/**
+ * Optional tap (nrscope): called with the equalised PBCH symbols (QPSK points) after every PBCH decode attempt
+ */
+SRSRAN_API extern void (*srsran_pbch_nr_const_cb)(const cf_t* symbols, uint32_t nof_symbols, bool crc_ok);
+
 #endif // SRSRAN_PBCH_NR_H

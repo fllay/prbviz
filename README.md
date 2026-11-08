@@ -1,14 +1,14 @@
 # prbviz - live 5G NR resource-grid visualizer
 
 A web viewer that shows what a 5G NR cell is doing on the air, in real time: a per-PRB power waterfall
-(per slot or per OFDM symbol) with TDD, SSB and CORESET0 overlays, plus a live SIB1 constellation.
+(per slot or per OFDM symbol) with TDD, SSB and CORESET0 overlays, plus a live PBCH constellation.
 
 It is a trimmed, self-contained copy of **NR-Scope** (Princeton, srsRAN-4G based) with a few taps added,
 and a small web server that turns the tapped data into a labelled browser view.
 
 ```
 USRP B210 ──► nrscope ───────────────► ZeroMQ PUB tcp://127.0.0.1:5556 ──► server/server.py ──HTTP :8080──► browser
-              (src/nrscope/.../prb_power_dump.cc)   topics: prb, sym, sib1c      (SUB → reorder by slot → SSE)
+              (src/nrscope/.../prb_power_dump.cc)   topics: prb, sym, pbchc      (SUB → reorder by slot → SSE)
 ```
 
 Tested on a Raspberry Pi 5 host with a USRP B210 against an N78 lab gNB (and a commercial n41 cell, config included).
@@ -53,10 +53,11 @@ Current testbed: gNB PCI 1, SSB at 3483.84 MHz (ARFCN 632256, GSCN 7835), 30 kHz
   visible. Use windows of 4 to 40 slots (4 slots = 2 ms). The SSB box follows the symbols that are actually loud in the SSB
   PRBs, because the SSB symbol position moves between runs (see the timing note below). The CORESET0 box uses
   `coreset0.sym_start` / `nsym` from the meta file, which are nominal and not yet verified on the testbed.
-* **SIB1 constellation.** The equalised SIB1 PDSCH symbols, with EVM computed on the server. It is not real time:
-  frames are throttled to one per 0.1 s, and the server keeps the 6 lowest-EVM frames from the last 5 minutes and replays
-  them to a newly connected browser, so the panel is populated at once. With the tracker fix below, EVM stays at about
-  3-5 % on the testbed and the panel keeps updating.
+* **PBCH constellation.** The equalised PBCH symbols (432 QPSK points per SSB) with the PBCH CRC result and an EVM computed on
+  the server. One frame is produced per SSB period, so it updates continuously, a few frames per second (throttled to 10 per second;
+  the newest frames are drawn brightest). The panel shows the last 8 frames. It needs nothing but a decoded PBCH, so it also works on cells
+  where SIB1 cannot be decoded. EVM is much worse than the SIB1 PDSCH EVM was on the strong lab gNB (about 35-45 % on the weak
+  commercial n41 cell) because PBCH is heavily coded and still decodes at low SNR: judge the cell by the cluster shape and CRC, not by EVM alone.
 
 ## Layout
 
@@ -75,8 +76,9 @@ Files changed or added in nrscope / srsRAN:
 
 | file | change |
 |---|---|
-| `src/nrscope/src/libs/prb_power_dump.cc`, `hdr/prb_power_dump.h` | ZeroMQ publisher, per-slot power, per-symbol power, `send_pdsch_constellation()` |
-| `src/nrscope/src/libs/sibs_decoder.cc` | calls `send_pdsch_constellation()` after each successful SIB1 PDSCH decode; keeps decoding when `NRSCOPE_SIB1C` is set |
+| `src/nrscope/src/libs/prb_power_dump.cc`, `hdr/prb_power_dump.h` | ZeroMQ publisher, per-slot power, per-symbol power, `pbch_const_tap()` (PBCH constellation), `send_pdsch_constellation()` (SIB1, no longer used by the viewer) |
+| `src/lib/src/phy/phch/pbch_nr.c`, `include/srsran/phy/phch/pbch_nr.h` | new hook `srsran_pbch_nr_const_cb`, called with the equalised PBCH symbols after every PBCH decode |
+| `src/nrscope/src/libs/sibs_decoder.cc` | calls `send_pdsch_constellation()` after each successful SIB1 PDSCH decode; keeps decoding when `NRSCOPE_SIB1C` is set (off by default) |
 | `src/nrscope/src/libs/nrscope_worker.cc` | SIB1 thread keeps running when `NRSCOPE_SIB1C` or `NRSCOPE_SIB1DBG` is set |
 | `src/nrscope/src/libs/radio_nr.cc` | optional sync debug print (`NRSCOPE_CFO_DBG`), token-leak fix |
 | `src/lib/src/phy/ue/ue_sync_nr.c` | **timing tracker fix** (see below) |
@@ -98,14 +100,15 @@ abs_slot = (sf_round*1024 + sfn) * 20 + slot_idx        (30 kHz SCS, 20 slots pe
 |---|---|---|---|
 | `prb` | 1 | `nprb` x u8, mean power per PRB, `q = (dB + 100) * 1.8`, `0` = missing (`dB = q/1.8 - 100`) | per-slot waterfall |
 | `sym` | 2 | `flags` (= 14) x `nprb` bytes, same encoding, one row per OFDM symbol | per-symbol view (`NRSCOPE_SYM=1`) |
-| `sib1c` | 5 | equalised SIB1 PDSCH symbols as int8 I/Q pairs (up to 4000 symbols per frame) | SIB1 constellation (`NRSCOPE_SIB1C=1`) |
+| `pbchc` | 6 | equalised PBCH symbols as int8 I/Q pairs (432 per frame), flags bit0 = CRC ok, `prb_lo` = number of symbols, float32 at offset 22 unused | PBCH constellation (`NRSCOPE_PBCHC=1`) |
+| `sib1c` | 5 | equalised SIB1 PDSCH symbols (up to 4000 per frame) | not subscribed by the server any more (`NRSCOPE_SIB1C=1`) |
 | `iq` | 3 | raw cf32 around the SSB | disabled (the server ignores it, `NRSCOPE_SSB_PRB` is no longer set) |
 
 Browser side: the server reorders rows by absolute slot and pushes them over Server-Sent Events.
 
 * `/stream` per-slot rows only.
 * `/stream?sym=1` adds per-symbol rows (only sent to browsers that ask, so the normal view costs nothing extra).
-* `/stream?iq=1` adds SIB1 constellation frames (`iq` here means "send the SIB1 constellation"); the cached good frames are replayed first, tagged with their `age`.
+* `/stream?iq=1` adds PBCH constellation frames (`iq` here means "send the constellation"); the last 4 frames are replayed first, tagged with their `age`.
 
 Server arguments: `--zmq <endpoint> --http <host:port> --meta <meta.json>`. Environment for `start.sh`: `ZMQ_ENDPOINT`
 (default `tcp://127.0.0.1:5556`), `HTTP` (default `0.0.0.0:8080`), `META` (default `server/meta.json`).
@@ -140,8 +143,7 @@ implements it in this source tree. They were checked by grepping the code, not b
             ▼
 ┌─────────────────────────┐   srsran_pbch_nr_decode()                   (extract, equalise, demod, polar, CRC)
 │ PBCH extract, equalise, │   called by ssb_decode_pbch()               (ssb.c)
-│ demod, BCH decode       │
-└───────────┬─────────────┘
+│ demod, BCH decode       │   constellation tap: srsran_pbch_nr_const_cb → pbch_const_tap()   (pbch_nr.c, prb_power_dump.cc, added)└───────────┬─────────────┘
             ▼
 ┌─────────────────────────┐   srsran_pbch_msg_nr_mib_unpack()           (nrscope task_scheduler.cc)
 │ MIB                     │
@@ -231,7 +233,7 @@ Notes on the mapping:
 
 ## Timing tracker fix
 
-**Symptom.** The SIB1 constellation was clean for about 14 s after every nrscope start, then SIB1 decoding stopped
+**Symptom.** The SIB1 constellation (the first version of the constellation panel) was clean for about 14 s after every nrscope start, then SIB1 decoding stopped
 (EVM 6 % → 35 %, then PDCCH CRC failures). The SSB symbol position in the per-symbol view also kept moving.
 
 **Cause.** The B210 and the gNB clocks differ by about 0.2 ppm, so the receive window slides against the air signal by
@@ -271,7 +273,8 @@ Debug: `NRSCOPE_CFO_DBG=1` prints `SYNCDBG ... cfo_hz delay_us sfn sf` every 200
 |---|---|
 | `NRSCOPE_ZMQ=<endpoint>` | enable the ZeroMQ publisher (set by `start.sh`) |
 | `NRSCOPE_SYM=1` | publish the `sym` topic (per-symbol power) |
-| `NRSCOPE_SIB1C=1` | keep decoding SIB1 and publish `sib1c` |
+| `NRSCOPE_PBCHC=1` | publish the `pbchc` topic (PBCH constellation, set by `start.sh`) |
+| `NRSCOPE_SIB1C=1` | keep decoding SIB1 and publish `sib1c` (off by default, the viewer ignores it) |
 | `NRSCOPE_SIB1DBG` | keep the SIB1 thread running for debugging |
 | `NRSCOPE_PRB_CSV=0` | disable the CSV dump |
 | `NRSCOPE_PRB_DECIM=N` | keep every Nth slot |
@@ -285,7 +288,7 @@ Debug: `NRSCOPE_CFO_DBG=1` prints `SYNCDBG ... cfo_hz delay_us sfn sf` every 200
 
 * The CORESET0 box in the per-symbol view uses nominal values from the meta file; it has not been verified against the air signal.
 * A RACH decode can crash nrscope with "Invalid PRACH preamble type"; `scripts/nrscope_loop.sh` restarts it.
-* SIB1 EVM assumes QPSK (see modulation notes).
+* SIB1 EVM assumed QPSK (see modulation notes); the PBCH constellation is always QPSK, so its EVM is valid.
 * `src/nrscope/src/CMakeLists.txt` links `/usr/local/lib/libyaml-cpp.a` and `zmq` (the system `libyaml-cpp.so` does not match the headers in `/usr/local`).
-* `server/demo.html` (replay) predates the symbol view and the SIB1 constellation.
+* `server/demo.html` (replay) predates the symbol view and the constellation panel.
 * Not built yet: slow-motion playback.

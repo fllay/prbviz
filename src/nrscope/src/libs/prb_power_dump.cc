@@ -16,6 +16,10 @@
 #include <vector>
 #include <zmq.h>
 
+extern "C" {
+extern void (*srsran_pbch_nr_const_cb)(const cf_t* symbols, uint32_t nof_symbols, bool crc_ok);
+}
+
 namespace PRBPowerDump {
 
 namespace {
@@ -361,6 +365,35 @@ void send_pdsch_constellation(const cf_t* d, uint32_t n, uint32_t mod_bits, bool
   z.publish("sib1c", buf.data(), buf.size());
 }
 
+
+// Equalised PBCH symbols (432 QPSK points per SSB), ZeroMQ topic "pbchc" (header version 6, flags bit0 = CRC ok, bits1.. = 2 bits/symbol,
+// "prb_lo" field = number of symbols; payload = float32 (0), then n x (int8 re, int8 im) scaled by 80). Called from srsran_pbch_nr_decode().
+void pbch_const_tap(const cf_t* d, uint32_t n, bool crc)
+{
+  ZmqPub& z = zpub();
+  if (!z.sock || d == nullptr || n == 0) {
+    return;
+  }
+  n = std::min<uint32_t>(n, 4000);
+  std::vector<uint8_t> buf(22 + 4 + (size_t)n * 2);
+  uint16_t magic = 0x5052, np = (uint16_t)n;
+  int16_t  gain = (int16_t)std::lround(g_rx_gain.load() * 10.0f);
+  memset(buf.data(), 0, buf.size());
+  memcpy(buf.data() + 0, &magic, 2);
+  buf[2] = 6;
+  buf[3] = (uint8_t)((crc ? 1 : 0) | (2 << 1));
+  memcpy(buf.data() + 16, &gain, 2);
+  memcpy(buf.data() + 18, &np, 2);
+  int8_t* out = (int8_t*)(buf.data() + 26);
+  for (uint32_t i = 0; i < n; i++) {
+    float re = std::min(127.0f, std::max(-127.0f, __real__ d[i] * 80.0f));
+    float im = std::min(127.0f, std::max(-127.0f, __imag__ d[i] * 80.0f));
+    out[2 * i]     = (int8_t)std::lround(re);
+    out[2 * i + 1] = (int8_t)std::lround(im);
+  }
+  z.publish("pbchc", buf.data(), buf.size());
+}
+
 void write_slot(const cf_t* sf_symbols, uint32_t nof_prb, uint32_t slot_idx, uint64_t abs_slot, uint32_t sfn,
                 int center_re, uint32_t span_re)
 {
@@ -451,3 +484,13 @@ void close()
 }
 
 } // namespace PRBPowerDump
+
+namespace {
+const bool g_pbch_tap_registered = [] {
+  const char* e = std::getenv("NRSCOPE_PBCHC");
+  if (e != nullptr && *e != '\0' && *e != '0') {
+    srsran_pbch_nr_const_cb = &PRBPowerDump::pbch_const_tap;
+  }
+  return true;
+}();
+} // namespace

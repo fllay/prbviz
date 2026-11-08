@@ -33,7 +33,7 @@
   <label><input id="ov_ssb" type="checkbox" checked>SSB</label>
   <label><input id="ov_cs0" type="checkbox" checked>CORESET0/SIB1</label>
   <label><input id="ov_frm" type="checkbox" checked>SFN/slots</label>
-  <label><input id="ov_const" type="checkbox" checked>SIB1 constellation</label>
+  <label><input id="ov_const" type="checkbox" checked>PBCH constellation</label>
   <button id="pause">Pause</button>
   <span id="stat"></span>
 </div>
@@ -84,7 +84,7 @@ function setMeta(m){ meta = m; if (m.name) $('cell').textContent = m.name + ' | 
 if (!window.__DEMO) fetch('/meta').then(function(r){ return r.json(); }).then(setMeta).catch(function(){});
 
 function onMsg(m){
-  if (m.sib1) { m.sib1.at = performance.now() - (m.sib1.age || 0) * 1000; sibQ.push(m.sib1); if (sibQ.length > 8) sibQ.shift(); return; }
+  if (m.pbch) { m.pbch.at = performance.now() - (m.pbch.age || 0) * 1000; sibQ.push(m.pbch); if (sibQ.length > 8) sibQ.shift(); return; }
   var u = b64(m.data);
   if (m.align !== undefined) { serverAlign = true; serverShift = m.align; serverMode = m.amode || 'ssb'; }
   if (m.np !== NP || !ring) { NP = m.np; LO = m.lo; ring = new Uint8Array(R * NP); ringAbs.fill(-1); img = null; symRing = null; symOk.fill(0); }
@@ -403,7 +403,7 @@ function draw(){
   ctx.fillStyle = '#9fb0bf'; ctx.font = '11px system-ui';
   ctx.fillText('period ' + pms + ' ms (' + tdd.period_slots + ' slots @ ' + (meta.scs_khz || 30) + ' kHz)  \u00b7  D downlink  \u00b7  U uplink  \u00b7  S special = ' + sd + ' DL + ' + (14 - sd - su) + ' flex + ' + su + ' UL symbols', G.px, G.ly - 19);
 
-  // SIB1 PDSCH constellation (equalised symbols from nrscope's SIB1 decoder; newest frames brightest)
+  // PBCH constellation (equalised QPSK symbols from nrscope's PBCH decoder, one frame per SSB; newest frames brightest)
   if (iqOn && $('ov_const').checked) {
     var cs = 170, cwid = cs + 20, chgt = cs + 62, cx0 = G.px + G.pw - cwid - 8, cy0 = G.py + 8;
     ctx.fillStyle = 'rgba(15,20,25,0.88)'; ctx.fillRect(cx0, cy0, cwid, chgt);
@@ -427,9 +427,9 @@ function draw(){
     }
     ctx.textAlign = 'left'; ctx.font = 'bold 11px system-ui'; ctx.fillStyle = '#e6edf3';
     var modName = lastS ? ({1: 'BPSK', 2: 'QPSK', 4: '16QAM', 6: '64QAM', 8: '256QAM'}[lastS.mod] || ('mod ' + lastS.mod)) : '';
-    ctx.fillText('SIB1 PDSCH' + (lastS ? '  ' + modName + '  CRC ' + (lastS.crc ? 'OK' : 'KO') : ''), cx0 + 10, cy0 + 15);
+    ctx.fillText('PBCH' + (lastS ? '  ' + modName + '  CRC ' + (lastS.crc ? 'OK' : 'KO') : ''), cx0 + 10, cy0 + 15);
     ctx.font = '10px system-ui'; ctx.fillStyle = '#9fb0bf';
-    ctx.fillText(lastS ? (lastS.evm != null ? 'EVM ' + lastS.evm.toFixed(0) + '%   ' : '') + lastS.n + ' symbols  \u00b7  SFN ' + lastS.sfn + ' slot ' + lastS.slot + '  \u00b7  ' + ((performance.now() - lastS.at) / 1000).toFixed(0) + ' s ago' : 'waiting for a SIB1 PDCCH/PDSCH decode...', cx0 + 10, cy0 + 28);
+    ctx.fillText(lastS ? (lastS.evm != null ? 'EVM ' + lastS.evm.toFixed(0) + '%   ' : '') + lastS.n + ' symbols  \u00b7  ' + ((performance.now() - lastS.at) / 1000).toFixed(1) + ' s ago' : 'waiting for a PBCH decode...', cx0 + 10, cy0 + 28);
     ctx.fillText('green = CRC OK, orange = CRC failed', cx0 + 10, cy0 + chgt - 6);
     ctx.textAlign = 'left';
   }
