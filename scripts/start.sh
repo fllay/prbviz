@@ -10,6 +10,17 @@ META="${META:-$ROOT/server/meta.json}"
 SSBPRB=$(python3 -c "import json,sys;s=json.load(open(sys.argv[1])).get('ssb',{});print('%d,%d'%(s['prb_lo'],s['prb_hi']))" "$META" 2>/dev/null)
 RUN="$ROOT/run"; mkdir -p "$RUN/logs"
 "$ROOT/scripts/stop.sh" >/dev/null 2>&1
+python3 - "$ROOT" "$CFG" "$META" > "$RUN/cell.id" 2>/dev/null <<'PY'
+import json, os, sys
+root, cfg, meta = sys.argv[1:4]
+rp = os.path.realpath
+try:
+    for c in json.load(open(os.path.join(root, 'config/cells.json'))):
+        if rp(os.path.join(root, c['config'])) == rp(cfg) and rp(os.path.join(root, c['meta'])) == rp(meta):
+            print(c['id']); break
+except Exception:
+    pass
+PY
 cp "$CFG" "$RUN/config.yaml"                       # nrscope reads ./config.yaml
 cp -n "$ROOT/build/nrscope/src/to_google.py" "$RUN/" 2>/dev/null
 cd "$RUN"

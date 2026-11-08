@@ -32,12 +32,18 @@ Tested on a Raspberry Pi 5 host with a USRP B210 against an N78 lab gNB (and a c
 scripts/build.sh                  # once: cmake + make nrscope nrscan   (about 100 s on the Pi)
 scripts/start.sh                  # server + nrscope; open http://<host>:8080/
 scripts/stop.sh                   # stop both (the B210 is exclusive, always stop before scanning)
+scripts/switch.sh n41_pci610      # restart on another cell of config/cells.json (the viewer's cell dropdown does the same)
 scripts/scan.sh config/xxx.yaml   # nrscan cell search
 ```
 
 * `scripts/start.sh [config.yaml]` defaults to `config/testbed_n78.yaml`. It copies the config to `run/config.yaml`
   (nrscope reads `./config.yaml`), starts the server, then starts nrscope through `scripts/nrscope_loop.sh`,
   a wrapper that restarts nrscope if it exits (for example after a RACH decode crash).
+* **Choosing the cell / band.** `config/cells.json` lists the cells the viewer can show (`id`, `name`, `band`, nrscope `config`, viewer `meta`).
+  The viewer shows them in the *cell* dropdown; choosing one restarts the web server and nrscope on that cell (`scripts/switch.sh`, log `run/switch.log`),
+  re-tunes the B210 and reloads the page after 15-40 s. It affects everybody watching this server. Only ids from `cells.json` are accepted
+  (`POST /select`, same-origin only; `GET /cells` lists them). To add a band, add a nrscope yaml + a meta json and one entry in `cells.json`.
+  The running cell is remembered in `run/cell.id` (written by `start.sh`).
 * Logs: `run/logs/nrscope.log`, `run/logs/server.log`. Build log: `build.log` (ends with `BUILD_DONE`).
 * Use the lowest GSCN of a cluster reported by `nrscan`. nrscope on a wrong GSCN prints repeated RF overflows and exits.
 * The radio is exclusive: scan, validate and live view cannot run at the same time.
@@ -311,6 +317,10 @@ activity test most boxes would be empty.
 | `ZMQ_ENDPOINT`, `HTTP`, `META` | server endpoint, listen address, meta file |
 
 ## Known issues and open items
+
+* n41 meta: `config/meta_n41_pci610.json` draws CORESET0 40 PRBs wide (126-165) but nrscope's SIB1 DCI line says `coreset0_bw=48` (MIB CORESET0 idx 10). The box should be derived from the decoded MIB (idx, SS0 idx, SSB idx, k_SSB) instead of the static meta.
+* n41: the CORESET0 activity test (slot-average power, > 8 dB) finds almost nothing in 10 s: SIB1/RAR PDCCH is one OFDM symbol on a commercial cell with seven beams and other traffic, which the slot average cannot separate. The legend then says `no activity seen`.
+* `scripts/cs0_interval.py` keeps the SFN parity of `cycle_slots` (n41); before this fix it counted the SSB slots as CORESET0 activity.
 
 * The CORESET0 box in the per-symbol view uses nominal values from the meta file; it has not been verified against the air signal.
 * A RACH decode can crash nrscope with "Invalid PRACH preamble type"; `scripts/nrscope_loop.sh` restarts it.

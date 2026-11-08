@@ -16,9 +16,10 @@ base = sys.argv[2] if len(sys.argv) > 2 else 'http://127.0.0.1:8080'
 THR = 8.0
 meta = json.load(urllib.request.urlopen(base + '/meta', timeout=10))
 c0 = meta['coreset0']; spf = meta.get('slots_per_frame', 20)
-if c0.get('cycle_slots'): cand = sorted(set(c % spf for c in c0['cycle_slots']))
-else: cand = sorted(c0['slot_idx'])
-print('CORESET0 PRB %d..%d, nominal slot(s) in frame %s, %d slots/frame' % (c0['prb_lo'], c0['prb_hi'] - 1, cand, spf))
+# nominal occasions: slot positions inside a 2-frame cycle (keeps the SFN parity of n41-style cycle_slots) or slots of every frame
+cyc = sorted(set(c % (2 * spf) for c in c0['cycle_slots'])) if c0.get('cycle_slots') else None
+cand = cyc if cyc else sorted(c0['slot_idx'])
+print('CORESET0 PRB %d..%d, nominal slot(s) %s %s, %d slots/frame' % (c0['prb_lo'], c0['prb_hi'] - 1, cand, 'in a 2-frame cycle' if cyc else 'in frame', spf))
 
 slots = {}; align = 0; lo = 0; NP = 0
 req = urllib.request.urlopen(base + '/stream', timeout=15); t0 = time.time()
@@ -38,7 +39,7 @@ def mean_db(q):
 rows = []
 for a, q in slots.items():
     f, si = divmod(a + align, spf)
-    if si in cand: rows.append((f, si, mean_db(q[i0:i1]) - mean_db(q[j0:j1])))
+    if (((a + align) % (2 * spf)) if cyc else si) in cand: rows.append((f, si, mean_db(q[i0:i1]) - mean_db(q[j0:j1])))
 rows = np.array(sorted(rows))
 fr_all = len(set(int(r[0]) for r in rows))
 print('captured %.0f ms (%d slots); %d nominal occasions' % (len(slots) * 0.5, len(slots), len(rows)))
@@ -47,7 +48,7 @@ act_f = sorted(set(int(f) for f in act[:, 0]))
 print('active occasions: %d (excess > %.0f dB: min %.1f, median %.1f, max %.1f);  idle occasions: max excess %.1f dB' % (
     len(act), THR, act[:, 2].min() if len(act) else 0, np.median(act[:, 2]) if len(act) else 0, act[:, 2].max() if len(act) else 0,
     rows[rows[:, 2] <= THR][:, 2].max() if (rows[:, 2] <= THR).any() else 0))
-if len(act_f) < 3: print('too few active occasions to estimate a period'); sys.exit(0)
+if len(act_f) < 3: print('too few active occasions (%d) to estimate a period; median excess of all occasions %.1f dB' % (len(act_f), np.median(rows[:, 2]))); sys.exit(0)
 d = np.diff(act_f); h = dict(zip(*[x.tolist() for x in np.unique(d, return_counts=True)]))
 med = int(np.median(d))
 print('slots in frame with activity:', sorted(set(int(s) for s in act[:, 1])))

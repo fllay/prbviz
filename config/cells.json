@@ -1,0 +1,16 @@
+[
+  {
+    "id": "n78_testbed",
+    "name": "n78 lab testbed (PCI 1, 3.48 GHz)",
+    "band": "n78",
+    "config": "config/testbed_n78.yaml",
+    "meta": "server/meta.json"
+  },
+  {
+    "id": "n41_pci610",
+    "name": "n41 commercial cell (PCI 610, 2.65 GHz)",
+    "band": "n41",
+    "config": "config/n41_pci610.yaml",
+    "meta": "config/meta_n41_pci610.json"
+  }
+]

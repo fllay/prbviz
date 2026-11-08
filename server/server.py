@@ -1,11 +1,29 @@
 #!/usr/bin/env python3
 """PRB grid server: per-slot rows from nrscope (ZeroMQ SUB, or legacy UDP) -> reorder by absolute slot -> SSE + static page."""
-import argparse, base64, json, math, os, queue, socket, struct, threading, time
+import argparse, base64, json, math, os, queue, socket, struct, subprocess, threading, time
+from urllib.parse import urlparse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 HDR = struct.Struct('<HBBQHBBhHH')  # magic,ver,flags,abs_slot,sfn,slot_idx,rsvd,gain_x10,prb_lo,nprb = 22 bytes
 assert HDR.size == 22
 HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+
+
+def load_cells():
+    try:
+        with open(os.path.join(ROOT, 'config', 'cells.json')) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return []
+
+
+def current_cell():
+    try:
+        with open(os.path.join(ROOT, 'run', 'cell.id')) as f:
+            return f.read().strip()
+    except OSError:
+        return ''
 
 
 try:
@@ -475,6 +493,12 @@ def make_handler(hub, meta_path):
                 except OSError:
                     body = b'{}'
                 self._send(200, 'application/json', body)
+            elif p == '/cells':
+                cs = load_cells()
+                sw = os.path.join(ROOT, 'run', 'switching')
+                self._send(200, 'application/json', json.dumps(dict(
+                    cells=[dict(id=c['id'], name=c.get('name', c['id']), band=c.get('band', '')) for c in cs],
+                    current=current_cell(), switching=os.path.exists(sw) and time.time() - os.path.getmtime(sw) < 120)).encode())
             elif p == '/stats':
                 st = dict(hub.stat)
                 st['clients'] = len(hub.clients)
@@ -521,6 +545,28 @@ def make_handler(hub, meta_path):
                         hub.iq_clients = sum(1 for x in hub.clients if getattr(x, 'iq', False))
             else:
                 self._send(404, 'text/plain', b'not found')
+        def do_POST(self):
+            # restart nrscope + server on another cell of config/cells.json (only ids from that file; same-origin only)
+            if self.path.split('?')[0] != '/select':
+                return self._send(404, 'text/plain', b'not found')
+            org = self.headers.get('Origin')
+            if org and urlparse(org).netloc != self.headers.get('Host'):
+                return self._send(403, 'application/json', b'{"error":"cross-origin"}')
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+            except ValueError:
+                body = {}
+            cid = body.get('id')
+            if cid not in [c['id'] for c in load_cells()]:
+                return self._send(400, 'application/json', b'{"error":"unknown cell"}')
+            sw = os.path.join(ROOT, 'run', 'switching')
+            if os.path.exists(sw) and time.time() - os.path.getmtime(sw) < 120:
+                return self._send(409, 'application/json', b'{"error":"a switch is already running"}')
+            if cid == current_cell() and not body.get('force'):
+                return self._send(200, 'application/json', json.dumps(dict(ok=True, same=True, current=cid)).encode())
+            log = open(os.path.join(ROOT, 'run', 'switch.log'), 'ab')
+            subprocess.Popen([os.path.join(ROOT, 'scripts', 'switch.sh'), cid], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+            self._send(202, 'application/json', json.dumps(dict(ok=True, switching=cid)).encode())
     return H
 
 

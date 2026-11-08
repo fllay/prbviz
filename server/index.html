@@ -16,6 +16,8 @@
   #stat{margin-left:auto;font-variant-numeric:tabular-nums;color:#9fb0bf}
   #hover{position:fixed;bottom:6px;left:50px;color:#c9d6e2;font-variant-numeric:tabular-nums;pointer-events:none}
   canvas{display:block}
+  #banner{position:fixed;top:45%;left:50%;transform:translate(-50%,-50%);background:#172029;border:1px solid #3a5a78;border-radius:8px;padding:16px 26px;color:#e6edf3;font-size:14px;text-align:center;display:none;z-index:9;max-width:70vw}
+  #banner small{display:block;color:#9fb0bf;margin-top:6px;font-size:12px}
   canvas.pannable{cursor:grab}
   canvas.panning{cursor:grabbing}
 </style></head>
@@ -23,6 +25,7 @@
 <div id="bar">
   <h1><span id="live"></span>NR-Scope live PRB grid</h1>
   <span id="cell"></span>
+  <label id="cellselL" style="display:none" title="Switching restarts nrscope and the SDR for everybody watching this server">cell <select id="cellsel"></select></label>
   <label>window <select id="win">
     <option value="4">4 slots (2 ms)</option><option value="10">10 slots (5 ms)</option><option value="20">20 slots (10 ms)</option>
     <option value="40">40 slots (20 ms)</option><option value="100">100 slots (50 ms)</option><option value="200">200 slots (100 ms)</option>
@@ -44,6 +47,7 @@
 </div>
 <canvas id="cv"></canvas>
 <div id="hover"></div>
+<div id="banner"></div>
 <script>
 (function(){
 'use strict';
@@ -124,6 +128,35 @@ function openStream(){
   es.onmessage = function(e){ onMsg(JSON.parse(e.data)); };
   es.onerror = function(){ $('live').className = ''; };
 }
+
+
+// ---- cell selector: the list comes from config/cells.json on the server; choosing one restarts server + nrscope on that cell
+var cellCur = '';
+function banner(t, sub){ var b = $('banner'); if (!t) { b.style.display = 'none'; return; } b.innerHTML = ''; b.appendChild(document.createTextNode(t)); if (sub) { var sm = document.createElement('small'); sm.textContent = sub; b.appendChild(sm); } b.style.display = 'block'; }
+function loadCells(){
+  fetch('/cells').then(function(r){ return r.json(); }).then(function(c){
+    var sel = $('cellsel'); sel.innerHTML = '';
+    (c.cells || []).forEach(function(x){ var o = document.createElement('option'); o.value = x.id; o.textContent = x.name; sel.appendChild(o); });
+    cellCur = c.current || ''; if (cellCur) sel.value = cellCur; else sel.selectedIndex = -1;
+    $('cellselL').style.display = (c.cells && c.cells.length) ? 'flex' : 'none';
+  }).catch(function(){});
+}
+$('cellsel').onchange = function(){
+  var id = this.value, name = this.options[this.selectedIndex].textContent, sel = this, t0 = Date.now();
+  banner('Switching to ' + name + ' ...', 'nrscope and the web server restart and the SDR re-tunes; this takes about 15-40 s');
+  fetch('/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) })
+    .then(function(r){ return r.json().then(function(j){ return { ok: r.ok, j: j }; }); })
+    .then(function(x){
+      if (!x.ok) { banner('Could not switch: ' + (x.j.error || 'error'), ''); sel.value = cellCur; setTimeout(function(){ banner(''); }, 3500); return; }
+      if (x.j.same) { banner(''); return; }
+      var poll = setInterval(function(){
+        if (Date.now() - t0 > 120000) { clearInterval(poll); banner('Switch is taking long', 'check run/switch.log and run/logs/nrscope.log on the host'); return; }
+        fetch('/cells').then(function(r){ return r.json(); }).then(function(c){ if (c.current === id && !c.switching) { clearInterval(poll); location.reload(); } }).catch(function(){});
+      }, 1500);
+    })
+    .catch(function(){ banner('Switch request failed', ''); sel.value = cellCur; setTimeout(function(){ banner(''); }, 3500); });
+};
+if (!window.__DEMO) loadCells();
 
 // ---- controls
 $('win').onchange = function(){ W = +this.value; };
