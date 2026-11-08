@@ -133,7 +133,7 @@
       <label class="chip"><input id="ov_ssbd" type="checkbox" checked><i style="background:#ff9f43"></i>PSS / SSS / PBCH</label>
       <label class="chip"><input id="ov_cs0" type="checkbox" checked><i style="background:#00e5ff"></i>CORESET0 / SIB1</label>
       <label class="chip" title="also draw the CORESET0 occasions where nothing was sent (faint)"><input id="ov_cs0i" type="checkbox" checked><i style="background:#4fa9b8"></i>Idle CORESET0</label>
-      <label class="chip" title="per-symbol view, zoomed in: REG bundles, CCE numbers (interleaved) and the DMRS positions inside CORESET0; bright = bundle carries PDCCH"><input id="ov_reg" type="checkbox" checked><i style="background:#00e5ff"></i>REG / CCE / DMRS</label>
+      <label class="chip" title="per-symbol view only: REG bundles, CCE numbers (interleaved) and the red DMRS dots inside CORESET0; bright = bundle carries PDCCH. The DMRS dots are drawn only when the window is 10 slots or less (zoom in to see them)"><input id="ov_reg" type="checkbox" checked><i style="background:#00e5ff"></i>REG / CCE / DMRS</label>
       <label class="chip" title="show the PBCH constellation and decoded MIB panel on the right"><input id="ov_const" type="checkbox" checked><i style="background:#7bdc7b"></i>PBCH constellation</label>
       </div>
     </div>
@@ -712,7 +712,7 @@ function draw(){
   // bundle f(j) = (r*C + c + shift) mod nB with j = 2c + r, C = nB/2; CCE i occupies bundle f(i). REGs are numbered time first.
   function cs0Detail(a, x0){
     var c0 = meta.coreset0, ns = c0.nsym || 1, npr = c0.prb_hi - c0.prb_lo, sw = cw / S, sy0 = c0.sym_start || 0, bw = 6 / ns, nB = npr * ns / 6;
-    if (bw !== Math.floor(bw) || nB !== Math.floor(nB) || nB % 2 || sw < 6 || rh < 5 || !s.sym) return;
+    if (bw !== Math.floor(bw) || nB !== Math.floor(nB) || nB % 2 || sw < (W <= 10 ? 2.5 : 6) || rh < 5 || !s.sym) return;
     var col = ((a % R) + R) % R, ok = s.abs[col] === a && s.symOk[col], C = nB / 2, cceOf = [], i, b, p, y, k, pw = [], ref = 0, nref = 0, mn = 1e9;
     for (i = 0; i < nB; i++) cceOf[(((i & 1) * C) + (i >> 1) + (meta.pci || 0)) % nB] = i;
     if (ok) {
@@ -737,10 +737,11 @@ function draw(){
         ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1;
         for (p = 1; p < bw; p++) { y = Math.round(yT + p * rh) + 0.5; ctx.beginPath(); ctx.moveTo(xL, y); ctx.lineTo(xL + wB, y); ctx.stroke(); }
         for (var l = 1; l < ns; l++) { var xx = Math.round(xL + l * sw) + 0.5; ctx.beginPath(); ctx.moveTo(xx, yT); ctx.lineTo(xx, yT + hB); ctx.stroke(); }
-        if (rh >= 12) {
-          ctx.fillStyle = on ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.45)';
-          for (p = c0.prb_lo + b * bw; p < c0.prb_lo + (b + 1) * bw; p++) for (y = 0; y < ns; y++) for (k = 1; k < 12; k += 4) ctx.fillRect(Math.round(xL + (y + 0.5) * sw - 1), Math.round(Yb(p) - (k + 0.5) * rh / 12 - 1), 2, 2);
-        }
+      }
+      if (W <= 10 && rh >= 7 && sw >= 2.5) {                         // DMRS (RE 1, 5, 9 of every REG): red dots, only in windows of 10 slots or less
+        var dz = Math.max(2, Math.min(3, Math.floor(sw - 1))), dh = dz / 2;
+        ctx.fillStyle = on ? '#ff2b2b' : 'rgba(255,43,43,0.75)';
+        for (p = c0.prb_lo + b * bw; p < c0.prb_lo + (b + 1) * bw; p++) for (y = 0; y < ns; y++) for (k = 1; k < 12; k += 4) ctx.fillRect(Math.round(xL + (y + 0.5) * sw - dh), Math.round(Yb(p) - (k + 0.5) * rh / 12 - dh), dz, dz);
       }
     }
     if (exEv.length) {
@@ -927,7 +928,7 @@ function draw(){
   setTxt('st_rate', rate + ' slots/s');
   setTxt('st_miss', String(missing)); $('st_miss').style.color = missing ? '#ffb74d' : '#7bdc7b';
   setTxt('st_align', serverAlign ? (serverShift > 0 ? '+' : '') + serverShift + ' · server, ' + (serverMode === 'ul' ? 'UL slot' : serverMode === 'none' ? 'none' : 'SSB') : calOk ? (sh > 0 ? '+' : '') + sh + ' · auto, SSB' : 'aligning…');
-  setTxt('st_note', symOn ? (s.sym ? 'symbol view' : 'symbol view: waiting') : '');
+  setTxt('st_note', symOn ? (s.sym ? ('symbol view' + (+$('win').value > 10 && $('ov_reg').checked ? ' \u00b7 DMRS dots: window \u2264 10 slots' : '')) : 'symbol view: waiting') : '');
   $('st_pause').style.display = paused ? 'inline-block' : 'none';
   if (mouse && mouse.x >= G.px && mouse.x < G.px + G.pw && mouse.y >= G.py && mouse.y < G.py + G.ph) {
     var jj = Math.floor((mouse.x - G.px) / cw), hsym = useSym ? Math.floor(((mouse.x - G.px) / cw - jj) * S) : -1, pr = LO + Math.floor((G.py + G.ph - mouse.y) / rh), ab = left + jj, cl = ((ab % R) + R) % R, ab2 = ab + sh;
