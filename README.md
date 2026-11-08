@@ -13,12 +13,12 @@ USRP B210 ──► nrscope ───────────────► Zer
 
 Tested on a Raspberry Pi 5 host with a USRP B210 against an N78 lab gNB (and a commercial n41 cell, config included).
 
-![The viewer on the n78 lab testbed: 10-slot window, per-symbol view, paused and scrolled back](docs/viewer_n78_testbed.png)
+![The viewer on the n78 lab testbed: 20-slot window, per-symbol view, paused and scrolled back, constellation docked on the right](docs/viewer_n78_testbed.png)
 
-*The viewer on the n78 lab testbed (PCI 1, 30 kHz SCS), per-symbol view, 10 slots (5 ms), paused and scrolled back 26.5 ms.
-Top: the TDD slot strip (`D D D D D D S U U U`, 5 ms period) with slot numbers and the SFN. Grid: carrier PRBs against OFDM symbols, colour = power.
+*The viewer on the n78 lab testbed (PCI 1, 30 kHz SCS), per-symbol view, 20 slots (10 ms), paused and scrolled back 55 ms.
+Top: the toolbar in three rows (cell and live status; window, view, colour scale and overlay chips; the scroll-back row while paused). Under it: the TDD slot strip (`D D D D D D S U U U`, 5 ms period) with slot numbers and the SFN. Grid: carrier PRBs against OFDM symbols, colour = power.
 White box: SSB beam 0 with PSS, PBCH+MIB, SSS, PBCH+MIB; the orange label is the CORESET0/SearchSpace0 index decoded from the MIB; the dashed box is the CORESET0 / SIB1 occasion (SIB1 here every 160 ms).
-Dotted lines: the B210 LO and the gNB centre. Top right: the equalised PBCH QPSK constellation (CRC OK) with the decoded MIB. Bottom: mean power per symbol, the slot format and the legend.*
+Dotted lines: the B210 LO and the gNB centre. The cyan label above the CORESET0 box is the exact PDCCH from the decoder (DCI format, RNTI, CCE range, aggregation level). Right: the equalised PBCH QPSK constellation (CRC OK) with the decoded MIB, docked next to the grid (the "PBCH constellation" chip hides it). Bottom: mean power per symbol, the slot format and the legend.*
 
 ## Contents
 
@@ -69,7 +69,7 @@ Current testbed: gNB PCI 1, SSB at 3483.84 MHz (ARFCN 632256, GSCN 7835), 30 kHz
   visible. Use windows of 4 to 40 slots (4 slots = 2 ms). The SSB box follows the symbols that are actually loud in the SSB
   PRBs, because the SSB symbol position moves between runs (see the timing note below). The CORESET0 box uses
   `coreset0.sym_start` / `nsym` from the meta file, which are nominal and not yet verified on the testbed.
-* **PSS / SSS / PBCH (MIB) overlay** (checkbox "PSS/SSS/PBCH", per-symbol view only). Inside each SSB box the 4 SSB symbols are split into
+* **PSS / SSS / PBCH (MIB) overlay** (overlay chip "PSS / SSS / PBCH", per-symbol view only). Inside each SSB box the 4 SSB symbols are split into
   PSS (symbol 0, centre 127 subcarriers), PBCH (symbols 1 and 3 over all 20 PRBs, symbol 2 over the outer 4 PRBs on each side) and SSS
   (symbol 2, centre 127 subcarriers). The MIB is carried by the PBCH. Use a 4-slot window so the symbols are wide enough to read; the
   PBCH columns are labelled "PBCH · MIB" (rotated when narrow) and a callout above the first SSB box of each slot shows the decoded MIB
@@ -77,10 +77,10 @@ Current testbed: gNB PCI 1, SSB at 3483.84 MHz (ARFCN 632256, GSCN 7835), 30 kHz
   sub-boxes are drawn from the nominal SSB layout (they ignore `k_SSB`, so edges can be off by a few subcarriers).
 * **MIB fields.** Under the PBCH constellation the viewer prints the decoded MIB: SFN, SSB index, common SCS, `k_SSB`, DM-RS type-A position,
   CORESET0 and SearchSpace0 indices, cell-barred and intra-frequency-reselection flags. They are only updated from frames whose CRC is OK.
-* **Pause and scroll.** Pause freezes a copy of the 4096-slot history (about 2 s at 30 kHz SCS). While paused a *scroll* slider appears in the toolbar;
+* **Pause and scroll.** Pause freezes a copy of the 4096-slot history (about 2 s at 30 kHz SCS). While paused a *scroll back* row appears under the toolbar;
   the plot can also be dragged with the mouse, scrolled with the wheel (or a horizontal trackpad swipe) or moved with the arrow keys
-  (Shift = half a window, PageUp/PageDown = one window, Home/End = oldest/newest). The status line shows the offset from the frozen newest slot.
-  **Jump to CORESET0:** when you press Pause the view scrolls to the newest *active* CORESET0 / SIB1 occasion in the frozen history (untick *jump on pause* to stay at the newest slot).
+  (Shift = half a window, PageUp/PageDown = one window, Home/End = oldest/newest). The scroll-back readout shows the offset from the frozen newest slot.
+  **Jump to CORESET0:** when you press Pause the view scrolls to the newest *active* CORESET0 / SIB1 occasion in the frozen history (untick *Jump to CORESET0 on pause* to stay at the newest slot).
   The buttons **< CORESET0** and **CORESET0 >** (keys `[` and `]`) step to the previous or next active occasion, centred in the window; a short message shows which one of how many (e.g. 12 of 13). An occasion counts as active by the same test as the box colour (more than 8 dB above the neighbouring PRBs).
   On the testbed SIB1 comes every 160 ms, so the 2 s history holds about 13 occasions; on n41 (every 20 ms per beam) there are many more.
 * **PBCH constellation.** The equalised PBCH symbols (432 QPSK points per SSB) with the PBCH CRC result and an EVM computed on
@@ -308,7 +308,7 @@ Debug: `NRSCOPE_CFO_DBG=1` prints `SYNCDBG ... cfo_hz delay_us sfn sf` every 200
 
 The period is **measured, not assumed**. The viewer compares the CORESET0 PRBs with the PRBs next to them in the same slot; an occasion is
 *active* when the difference is above 8 dB. Active occasions are drawn as a bright, filled cyan box (with the excess in dB when there is room for
-the label), idle ones as a faint dashed box (checkbox "idle CORESET0" hides them), and the legend shows the median distance between active frames,
+the label), idle ones as a faint dashed box (the "Idle CORESET0" chip hides them), and the legend shows the median distance between active frames,
 for example `CORESET0 / SIB1 - active every 160 ms (16 frames)`. A cell that repeats SIB1 every 20 ms shows `every 20 ms (2 frames)` without any change.
 
 `scripts/cs0_interval.py [seconds]` does the same offline from the live stream and prints the interval histogram. On the lab testbed (CORESET0 idx 0,
