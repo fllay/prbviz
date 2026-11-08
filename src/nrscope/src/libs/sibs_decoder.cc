@@ -1,4 +1,5 @@
 #include "nrscope/hdr/sibs_decoder.h"
+#include "nrscope/hdr/prbviz_prof.h"
 #include "nrscope/hdr/prbviz_quiet.h"
 #include "nrscope/hdr/prb_power_dump.h"
 #include <bitset>
@@ -90,6 +91,7 @@ int SIBsDecoder::SIBDecoderandReceptionInit(WorkState* state,
 int SIBsDecoder::DecodeandParseSIB1fromSlot(srsran_slot_cfg_t* slot,
                                             WorkState* state,
                                             SlotResult* result) {
+  PROF(prof_sib, "sib.total");
   static const bool sib1dbg = std::getenv("NRSCOPE_SIB1DBG") != nullptr; // prbviz: log every SIB1 PDCCH hit (slot/SFN)
   static const bool sib1c = std::getenv("NRSCOPE_SIB1C") != nullptr;    // prbviz: publish the equalised SIB1 PDSCH symbols every time SIB1 is received
   static const bool dcisi = std::getenv("NRSCOPE_DCI_SI") != nullptr;   // prbviz: keep decoding the SI-RNTI PDCCH after SIB1 is known, to publish its CCEs on topic "dci"

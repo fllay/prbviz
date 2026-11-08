@@ -1,4 +1,5 @@
 #include "nrscope/hdr/rach_decoder.h"
+#include "nrscope/hdr/prbviz_prof.h"
 #include "nrscope/hdr/prbviz_quiet.h"
 #include "nrscope/hdr/prb_power_dump.h"
 
@@ -278,6 +279,7 @@ int RachDecoder::RACHReceptionInit(WorkState* state, cf_t* input[SRSRAN_MAX_PORT
 
 int RachDecoder::DecodeandParseMS4fromSlot(srsran_slot_cfg_t* slot, WorkState* state, SlotResult* result)
 {
+  PROF(prof_rach, "rach.total");
   if (!state->sib1_found or !state->rach_inited) {
     // If the SIB 1 is not detected or the RACH decoder is not initialized.
     std::cout << "SIB 1 not found or decoder not initialized, quitting..." << std::endl;
@@ -298,21 +300,28 @@ int RachDecoder::DecodeandParseMS4fromSlot(srsran_slot_cfg_t* slot, WorkState* s
   }
   // memset(&dci_rach, 0, sizeof(srsran_dci_dl_nr_t));
 
-  srsran_ue_dl_nr_estimate_fft_nrscope(&ue_dl_rach, slot, arg_scs);
-  srsran_ue_dl_nr_estimate_fft_nrscope(&ue_dl_pdsch, slot, arg_scs_pdsch);
+  {
+    PROF(prof_fft, "rach.fft x2");
+    srsran_ue_dl_nr_estimate_fft_nrscope(&ue_dl_rach, slot, arg_scs);
+    srsran_ue_dl_nr_estimate_fft_nrscope(&ue_dl_pdsch, slot, arg_scs_pdsch);
+  }
 
   // Phase 1 (web visualizer): dump per-PRB power of the full-carrier grid every
   // slot. This runs from SIB1-found onward, independent of RACH/DCI success.
-  PRBPowerDump::write_slot(ue_dl_pdsch.sf_symbols[0],
+  { PROF(prof_dump, "rach.powerdump"); PRBPowerDump::write_slot(ue_dl_pdsch.sf_symbols[0],
                            pdsch_carrier.nof_prb,
                            slot->idx,
                            ((state->cur_sf_round * 1024ULL + state->cur_sfn) * 20ULL) + slot->idx,
                            state->cur_sfn,
                            (int)(pdsch_carrier.nof_prb * 12 / 2) + (int)arg_scs_pdsch.coreset_offset_scs,
-                           (uint32_t)srsran_symbol_sz_from_srate(arg_scs_pdsch.srate, arg_scs_pdsch.scs));
+                           (uint32_t)srsran_symbol_sz_from_srate(arg_scs_pdsch.srate, arg_scs_pdsch.scs)); }
 
-  int nof_found_dci =
-      srsran_ue_dl_nr_find_dl_dci_nrscope(&ue_dl_rach, slot, ra_rnti, nof_ra_rnti, srsran_rnti_type_tc, dci_rach, 4);
+  int nof_found_dci;
+  {
+    PROF(prof_search, "rach.dcisearch");
+    nof_found_dci =
+        srsran_ue_dl_nr_find_dl_dci_nrscope(&ue_dl_rach, slot, ra_rnti, nof_ra_rnti, srsran_rnti_type_tc, dci_rach, 4);
+  }
 
   if (nof_found_dci < SRSRAN_SUCCESS) {
     ERROR("RACHDecoder -- Error in blind search");

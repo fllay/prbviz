@@ -1,4 +1,5 @@
 #include "nrscope/hdr/nrscope_worker.h"
+#include "nrscope/hdr/prbviz_prof.h"
 #include "nrscope/hdr/prbviz_quiet.h"
 #include <chrono>
 #include <semaphore>
@@ -252,6 +253,7 @@ void NRScopeWorker::Run()
   while (true) {
     /* When there is a job, the semaphore is set and buffer is copied */
     sem_wait(&smph_has_job);
+    PROF(prof_slot, "worker.slot");
     // worker_locks[worker_id].lock();
     // busy = true;
     busy.store(true, std::memory_order_release);

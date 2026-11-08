@@ -1,4 +1,5 @@
 #include "nrscope/hdr/dci_decoder.h"
+#include "nrscope/hdr/prbviz_prof.h"
 #include "nrscope/hdr/prb_power_dump.h"
 
 DCIDecoder::DCIDecoder(uint32_t max_nof_rntis)
@@ -962,6 +963,7 @@ int DCIDecoder::DecodeandParseDCIfromSlot(srsran_slot_cfg_t*                   s
                                           std::vector<float>&                  ul_prb_rate,
                                           std::vector<float>&                  ul_prb_bits_rate)
 {
+  PROF(prof_dci, "dci.thread");
   if (!state->rach_found or !state->dci_inited) {
     std::cout << "RACH not found or DCI decoder not initialized, quitting..." << std::endl;
     return SRSRAN_SUCCESS;

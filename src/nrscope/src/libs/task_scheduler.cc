@@ -1,4 +1,5 @@
 #include "nrscope/hdr/task_scheduler.h"
+#include "nrscope/hdr/prbviz_prof.h"
 #include "nrscope/hdr/prbviz_quiet.h"
 
 namespace NRScopeTask {
@@ -415,6 +416,10 @@ void TaskSchedulerNRScope::Run()
       wait for the correct data for output */
     if (slot_results.size() > 0)
       UpdateStateandLog();
+    // prbviz: this loop polled the result queue without ever sleeping (a core at 100 %, and constant contention on queue_lock
+    // with the worker threads). A slot lasts 500 us at 30 kHz SCS, so 100 us of sleep when nothing arrived is invisible.
+    if (queue_len == 0)
+      std::this_thread::sleep_for(std::chrono::microseconds(100));
   }
 }
 
@@ -475,6 +480,7 @@ int TaskSchedulerNRScope::AssignTask(uint64_t                    sf_round,
                                      srsran_ue_sync_nr_outcome_t outcome,
                                      cf_t*                       rx_buffer_)
 {
+  PROF(prof_assign, "assign.total");
   /* Find the first idle worker */
   bool found_worker = false;
   // std::cout << "Assigning sf_round: " << sf_round << ", sfn: " << outcome.sfn
@@ -487,9 +493,9 @@ int TaskSchedulerNRScope::AssignTask(uint64_t                    sf_round,
       found_worker = true;
       /* Copy the rx_buffer_ to the worker's rx_buffer. This won't be
       interfering with other threads? */
-      workers[i].get()->CopySlotandBuffer(sf_round, slot, outcome, rx_buffer_);
+      { PROF(prof_copy, "assign.copy"); workers[i].get()->CopySlotandBuffer(sf_round, slot, outcome, rx_buffer_); }
       /* Update the worker's state */
-      workers[i].get()->SyncState(&task_scheduler_state);
+      { PROF(prof_sync, "assign.syncstate"); workers[i].get()->SyncState(&task_scheduler_state); }
       /* Set the worker's sem to let the task run */
       sem_post(&workers[i].get()->smph_has_job);
       workers[i].get()->busy = true;
@@ -519,6 +525,7 @@ int TaskSchedulerNRScope::StoreSlotData(uint64_t                    sf_round,
                                         srsran_ue_sync_nr_outcome_t outcome,
                                         cf_t*                       rx_buffer_)
 {
+  PROF(prof_store, "ring.store");
   const uint32_t i = next_slot_idx.load(std::memory_order_relaxed);
   SlotData_&     s = slot_data[i];
 

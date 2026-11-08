@@ -1,4 +1,5 @@
 #include "nrscope/hdr/radio_nr.h"
+#include "nrscope/hdr/prbviz_prof.h"
 #include "nrscope/hdr/prbviz_quiet.h"
 #include "nrscope/hdr/prb_power_dump.h"
 #include <chrono>
@@ -747,7 +748,7 @@ int Radio::FetchAndResample()
     int current_value;
     sem_getvalue(&smph_sf_data_finished, &current_value);
     if (prbviz_verbose()) std::cout << "current value: " << current_value << std::endl;
-    sem_wait(&smph_sf_data_finished);
+    { PROF(prof_pw, "prod.waitconsumer"); sem_wait(&smph_sf_data_finished); }
 
     outcome.timestamp = last_rx_time.get(0);
     struct timeval t0, t1;
@@ -774,8 +775,10 @@ int Radio::FetchAndResample()
       the target sf arr area and the original raw extra part
       beyond the boundary doesn't matter */
     if (getenv("NRSCOPE_CFO_SET") && in_sync) { ue_sync_nr.cfo_hz = (float)atof(getenv("NRSCOPE_CFO_SET")); }
-    if (srsran_ue_sync_nr_zerocopy_twinrx_nrscope(
-            &ue_sync_nr, rf_buffer_t.to_cf_t(), &outcome, rk, resample_needed, RESAMPLE_WORKER_NUM) < SRSRAN_SUCCESS) {
+    int prof_rc;
+    { PROF(prof_rx, "rx.sync"); prof_rc = srsran_ue_sync_nr_zerocopy_twinrx_nrscope(
+            &ue_sync_nr, rf_buffer_t.to_cf_t(), &outcome, rk, resample_needed, RESAMPLE_WORKER_NUM); }
+    if (prof_rc < SRSRAN_SUCCESS) {
       std::cout << "SYNC: error in zerocopy" << std::endl;
       logger.error("SYNC: error in zerocopy");
       return false;
@@ -817,6 +820,7 @@ int Radio::DecodeAndProcess()
   task_scheduler_nrscope.task_scheduler_state.sib1_inited = true;
   while (true) {
     sem_wait(&smph_sf_data_prod_cons);
+    PROF(prof_cons, "cons.iter");
     // std::cout << "current_consume_at: " << (first_time ? 0 :
     //   ((next_consume_at % RING_BUF_MODULUS + 1))) << std::endl;
     outcome.timestamp = last_rx_time.get(0);
@@ -910,7 +914,9 @@ int Radio::RadioCapture()
   std::thread fetch_thread{&Radio::FetchAndResample, this};
   std::thread deco_thread{&Radio::DecodeAndProcess, this};
 
+  // prbviz: this loop was empty and kept a core at 100 %; the two threads do all the work
   while (true) {
+    std::this_thread::sleep_for(std::chrono::seconds(1));
   }
 
   return SRSRAN_SUCCESS;
