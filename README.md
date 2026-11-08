@@ -289,6 +289,14 @@ in between (75 of 75 such frames were 10.5 dB or more above the neighbouring PRB
 as extra active occasions at other SFNs; they are only sent when needed. The meta file only gives the nominal occasion (slot and PRBs), so without the
 activity test most boxes would be empty.
 
+**n41 (commercial cell, decoder result).** `scripts/sib1_period.py` listens to the `sib1c` topic that nrscope publishes for every decoded SIB1
+(start nrscope with `NRSCOPE_SIB1C=1`, e.g. `NRSCOPE_SIB1C=1 scripts/switch.sh n41_pci610`, and restart without it afterwards). In 60 s on PCI 610 it
+decoded 14884 SI-RNTI DCIs, 13997 of them with PDSCH CRC OK (QPSK). They sit exactly at the nominal occasions of SSB beams 0, 1, 4, 5 and 6 (slot positions
+10, 12 and 18 of even SFNs, 0 and 2 of odd SFNs) and repeat every 2 frames per beam: **SIB1 every 20 ms per beam**, one beam or another in every frame.
+Beam 3 (slot 16) was seen twice in 60 s (probably not received at this location). The remaining ~900 events (slot positions 9 and 29, CRC failed) are
+false alarms of the blind search. The power-based test (viewer legend, `cs0_interval.py`) finds nothing on this cell (see known issues), so use the
+decoder result on commercial cells.
+
 ## Modulation notes
 
 * PBCH is always QPSK (432 data REs per SSB; 864 coded bits after polar coding and rate matching). PSS and SSS are BPSK.
@@ -319,7 +327,7 @@ activity test most boxes would be empty.
 ## Known issues and open items
 
 * n41 meta: `config/meta_n41_pci610.json` draws CORESET0 40 PRBs wide (126-165) but nrscope's SIB1 DCI line says `coreset0_bw=48` (MIB CORESET0 idx 10). The box should be derived from the decoded MIB (idx, SS0 idx, SSB idx, k_SSB) instead of the static meta.
-* n41: the CORESET0 activity test (slot-average power, > 8 dB) finds almost nothing in 10 s: SIB1/RAR PDCCH is one OFDM symbol on a commercial cell with seven beams and other traffic, which the slot average cannot separate. The legend then says `no activity seen`.
+* n41: the power-based CORESET0 activity test (viewer legend, `cs0_interval.py`) finds nothing, although the decoder sees SIB1 every 20 ms per beam (`sib1_period.py`). Slot-average power and an 8-PRB window scan both failed to separate it from the cell traffic, or the PRBs in the meta are wrong (meta: 40 PRBs, decoder: 48). The legend is therefore wrong on n41; the viewer should take the SIB1 occasions from the `sib1c` decodes (or from the MIB) instead of power.
 * `scripts/cs0_interval.py` keeps the SFN parity of `cycle_slots` (n41); before this fix it counted the SSB slots as CORESET0 activity.
 
 * The CORESET0 box in the per-symbol view uses nominal values from the meta file; it has not been verified against the air signal.
