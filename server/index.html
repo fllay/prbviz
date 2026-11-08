@@ -282,6 +282,21 @@ function draw(){
   function X(abs){ return G.px + (abs - left) * cw; }
   function Y(prb){ return G.py + G.ph - (prb - LO + 1) * rh; }        // top edge of PRB row
   function Yb(prb){ return G.py + G.ph - (prb - LO) * rh; }           // bottom edge
+  // callout above the SSB block with the decoded MIB (latest PBCH frame that passed CRC)
+  function mibCallout(x, y){
+    var mb = null;
+    for (var i = sibQ.length - 1; i >= 0; i--) if (sibQ[i].mib) { mb = sibQ[i].mib; break; }
+    if (!mb) return;
+    var t = 'MIB: CORESET0 idx ' + mb.cs0 + ' \u00b7 SS0 idx ' + mb.ss0 + ' \u00b7 SCS ' + mb.scs + ' kHz' + (mb.barred ? ' \u00b7 CELL BARRED' : '');
+    ctx.save(); ctx.font = 'bold 10px system-ui';
+    var w = ctx.measureText(t).width + 8, yy = Math.max(G.py + 12, y), rl = G.px + G.pw - 2;
+    if (iqOn && $('ov_const').checked && yy - 11 < G.py + 8 + 276) rl = G.px + G.pw - 258 - 4;      // stay left of the constellation panel
+    var xx = Math.max(G.px + 2, Math.min(x, rl - w));
+    ctx.fillStyle = 'rgba(15,20,25,0.88)'; ctx.fillRect(xx, yy - 11, w, 14);
+    ctx.strokeStyle = '#ff9f43'; ctx.lineWidth = 1; ctx.strokeRect(xx + 0.5, yy - 10.5, w - 1, 13);
+    ctx.fillStyle = '#ffb870'; ctx.textAlign = 'left'; ctx.fillText(t, xx + 4, yy);
+    ctx.restore();
+  }
   // PSS / SSS / PBCH (carries the MIB) inside one SSB block: bx = left edge, bw = width of its 4 symbols; the SSB is 240 subcarriers = 20 PRB
   function ssbParts(bx, bw){
     var sw = bw / 4, lo = meta.ssb.prb_lo;
@@ -292,7 +307,12 @@ function draw(){
       var x = bx + p[1] * sw, y1 = yy(p[3]), y0 = yy(p[2]);
       ctx.globalAlpha = 0.2; ctx.fillStyle = p[4]; ctx.fillRect(x, y1, sw, y0 - y1);
       ctx.globalAlpha = 0.95; ctx.strokeStyle = p[4]; ctx.strokeRect(x + 0.5, y1 + 0.5, sw - 1, y0 - y1 - 1);
-      if (sw >= 24 && (p[3] - p[2]) >= 100) { ctx.fillStyle = '#fff'; ctx.font = 'bold 10px system-ui'; ctx.fillText(p[0], x + sw / 2, (y0 + y1) / 2 + 3); }
+      if ((p[3] - p[2]) >= 100) {
+        var nm = (p[0] === 'PBCH' && sw >= 64) ? 'PBCH (MIB)' : (p[0] === 'PBCH' ? 'PBCH \u00b7 MIB' : p[0]);
+        ctx.fillStyle = '#fff';
+        if (sw >= 24 && nm.length <= 4 || sw >= 64) { ctx.font = 'bold 10px system-ui'; ctx.fillText(nm, x + sw / 2, (y0 + y1) / 2 + 3); }
+        else if (sw >= 9) { ctx.save(); ctx.font = 'bold 9px system-ui'; ctx.translate(x + sw / 2 + 3, (y0 + y1) / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(nm, 0, 0); ctx.restore(); }
+      }
     });
     ctx.restore();
   }
@@ -335,10 +355,12 @@ function draw(){
           var bx = x0 + cw * bs0 / S, bw = cw * bn0 / S;
           ctx.strokeRect(bx + 0.5, Y(meta.ssb.prb_hi - 1), Math.max(bw - 1, 1), (meta.ssb.prb_hi - meta.ssb.prb_lo) * rh);
           if ($('ov_ssbd').checked && useRuns && bn0 === (meta.ssb.nsym || 4) && bw >= 40) ssbParts(bx, bw);
+          if (bi === 0 && $('ov_ssbd').checked && bw >= 16) mibCallout(bx, Y(meta.ssb.prb_hi - 1) - 18);
           if (bw >= 16) { ctx.fillStyle = '#fff'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center'; ctx.fillText('SSB b' + blk[bi].b, bx + bw / 2, Y(meta.ssb.prb_hi - 1) - 4); ctx.font = '9px system-ui'; }
         }
       } else {
       ctx.strokeRect(x0 + 0.5, Y(meta.ssb.prb_hi - 1), Math.max(cw - 1, 1), (meta.ssb.prb_hi - meta.ssb.prb_lo) * rh);
+      if ($('ov_ssbd').checked && cw >= 40) mibCallout(x0, Y(meta.ssb.prb_hi - 1) - 18);
       }
       if (!blk && meta.ssb.beams && meta.ssb.beams[si] != null && cw >= 16) { ctx.fillStyle = '#fff'; ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'center'; ctx.fillText('b' + meta.ssb.beams[si], x0 + cw / 2, Y(meta.ssb.prb_hi - 1) + 12); ctx.font = '9px system-ui'; }
     }

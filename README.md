@@ -56,6 +56,8 @@ Current testbed: gNB PCI 1, SSB at 3483.84 MHz (ARFCN 632256, GSCN 7835), 30 kHz
 * **PSS / SSS / PBCH (MIB) overlay** (checkbox "PSS/SSS/PBCH", per-symbol view only). Inside each SSB box the 4 SSB symbols are split into
   PSS (symbol 0, centre 127 subcarriers), PBCH (symbols 1 and 3 over all 20 PRBs, symbol 2 over the outer 4 PRBs on each side) and SSS
   (symbol 2, centre 127 subcarriers). The MIB is carried by the PBCH. Use a 4-slot window so the symbols are wide enough to read; the
+  PBCH columns are labelled "PBCH · MIB" (rotated when narrow) and a callout above the first SSB box of each slot shows the decoded MIB
+  (CORESET0 idx, SS0 idx, SCS, cell barred); the callout is also drawn in the per-slot view. The
   sub-boxes are drawn from the nominal SSB layout (they ignore `k_SSB`, so edges can be off by a few subcarriers).
 * **MIB fields.** Under the PBCH constellation the viewer prints the decoded MIB: SFN, SSB index, common SCS, `k_SSB`, DM-RS type-A position,
   CORESET0 and SearchSpace0 indices, cell-barred and intra-frequency-reselection flags. They are only updated from frames whose CRC is OK.
