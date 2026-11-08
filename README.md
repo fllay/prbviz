@@ -80,6 +80,9 @@ Current testbed: gNB PCI 1, SSB at 3483.84 MHz (ARFCN 632256, GSCN 7835), 30 kHz
 * **Pause and scroll.** Pause freezes a copy of the 4096-slot history (about 2 s at 30 kHz SCS). While paused a *scroll* slider appears in the toolbar;
   the plot can also be dragged with the mouse, scrolled with the wheel (or a horizontal trackpad swipe) or moved with the arrow keys
   (Shift = half a window, PageUp/PageDown = one window, Home/End = oldest/newest). The status line shows the offset from the frozen newest slot.
+  **Jump to CORESET0:** when you press Pause the view scrolls to the newest *active* CORESET0 / SIB1 occasion in the frozen history (untick *jump on pause* to stay at the newest slot).
+  The buttons **< CORESET0** and **CORESET0 >** (keys `[` and `]`) step to the previous or next active occasion, centred in the window; a short message shows which one of how many (e.g. 12 of 13). An occasion counts as active by the same test as the box colour (more than 8 dB above the neighbouring PRBs).
+  On the testbed SIB1 comes every 160 ms, so the 2 s history holds about 13 occasions; on n41 (every 20 ms per beam) there are many more.
 * **PBCH constellation.** The equalised PBCH symbols (432 QPSK points per SSB) with the PBCH CRC result and an EVM computed on
   the server. One frame is produced per SSB period, so it updates continuously, a few frames per second (throttled to 10 per second;
   the newest frames are drawn brightest). The panel shows the last 8 frames. It needs nothing but a decoded PBCH, so it also works on cells

@@ -50,6 +50,12 @@
   <label><input id="ov_const" type="checkbox" checked>PBCH constellation</label>
   <button id="pause">Pause</button>
   <label id="panlab" style="display:none" title="drag the plot, mouse wheel / shift+wheel, or arrow keys also scroll (Shift = half window, Home/End = oldest/newest)">scroll <input id="pan" type="range" min="0" max="0" value="0" step="1" style="width:320px"> <span id="panpos" style="min-width:150px;font-variant-numeric:tabular-nums;color:#9fb0bf"></span></label>
+  <span id="cs0nav" style="display:none;gap:8px;align-items:center">
+    <button id="cs0prev" title="scroll to the previous active CORESET0 / SIB1 occasion in the frozen history  ( [ )">&#9664; CORESET0</button>
+    <button id="cs0next" title="scroll to the next active CORESET0 / SIB1 occasion  ( ] )">CORESET0 &#9654;</button>
+    <label title="when you press Pause, scroll to the newest active CORESET0 occasion"><input id="cs0jump" type="checkbox" checked>jump on pause</label>
+    <span id="cs0msg" style="color:#9fb0bf;font-variant-numeric:tabular-nums"></span>
+  </span>
   <span id="stat"></span>
 </div>
 <canvas id="cv"></canvas>
@@ -264,9 +270,33 @@ $('pause').onclick = function(){
   panOff = 0; panDrag = null;
   var on = paused && !!snap;
   $('panlab').style.display = on ? 'flex' : 'none'; cv.classList.toggle('pannable', on); cv.classList.remove('panning');
+  $('cs0nav').style.display = (on && meta.coreset0) ? 'flex' : 'none';
+  if (on && meta.coreset0 && $('cs0jump').checked) cs0Go(0);
 };
 function slotMs(){ return 15 / (meta.scs_khz || 30); }
 function panTo(v){ panOff = Math.max(0, Math.min(maxPan, Math.round(v))); }
+// ---- jump to CORESET0: active occasions (same test as the box colour) in the frozen history
+var cs0MsgT = null;
+function cs0Msg(t){ $('cs0msg').textContent = t; clearTimeout(cs0MsgT); cs0MsgT = setTimeout(function(){ $('cs0msg').textContent = ''; }, 4000); }
+function cs0Occ(){
+  var out = [], spf = meta.slots_per_frame || 20, sh = serverAlign ? 0 : calShift, a;
+  if (!snap || !meta.coreset0) return out;
+  for (a = snapMin; a <= snap.newest; a++) if (cs0Nominal(a, sh, spf) && cs0Excess(snap, a) > CS0_THR) out.push(a);
+  return out;
+}
+function cs0Go(dir){                                        // dir: 0 = newest occasion, -1 = previous (older), +1 = next (newer) than the one in the middle of the window
+  if (!paused || !snap) return;
+  var o = cs0Occ(), c = snap.newest - panOff - (W >> 1), t = null, i;
+  if (dir === 0) t = o.length ? o[o.length - 1] : null;
+  else if (dir < 0) { for (i = o.length - 1; i >= 0; i--) if (o[i] < c) { t = o[i]; break; } }
+  else { for (i = 0; i < o.length; i++) if (o[i] > c) { t = o[i]; break; } }
+  if (t === null) { cs0Msg(o.length ? (dir < 0 ? 'no earlier occasion' : 'no later occasion') : 'no CORESET0 activity in the frozen history'); return; }
+  maxPan = Math.max(0, snap.newest - snapMin + 1 - W);
+  panTo(snap.newest - t - (W >> 1));
+  cs0Msg('CORESET0 occasion ' + (o.indexOf(t) + 1) + ' of ' + o.length);
+}
+$('cs0prev').onclick = function(){ cs0Go(-1); this.blur(); };
+$('cs0next').onclick = function(){ cs0Go(1); this.blur(); };
 $('pan').oninput = function(){ if (paused && snap) panTo(maxPan - +this.value); };
 cv.addEventListener('wheel', function(e){
   if (!paused || !snap || !G) return;
@@ -292,6 +322,8 @@ window.addEventListener('keydown', function(e){
   else if (k === 'PageDown') panTo(panOff - W);
   else if (k === 'Home') panTo(maxPan);
   else if (k === 'End') panTo(0);
+  else if (k === '[') cs0Go(-1);
+  else if (k === ']') cs0Go(1);
   else return;
   e.preventDefault();
 });
