@@ -2,66 +2,79 @@
  {
   "band": 1,
   "name": "n1  (1920\u20131980 / 2110\u20132170 MHz)",
-  "est_s": 42
+  "est_s": 42,
+  "gscn_total": 141
  },
  {
   "band": 3,
   "name": "n3  (1710\u20131785 / 1805\u20131880 MHz)",
-  "est_s": 53
+  "est_s": 53,
+  "gscn_total": 177
  },
  {
   "band": 7,
   "name": "n7  (2500\u20132570 / 2620\u20132690 MHz)",
-  "est_s": 50
+  "est_s": 50,
+  "gscn_total": 165
  },
  {
   "band": 8,
   "name": "n8  (880\u2013915 / 925\u2013960 MHz)",
-  "est_s": 23
+  "est_s": 23,
+  "gscn_total": 78
  },
  {
   "band": 20,
   "name": "n20  (791\u2013821 / 832\u2013862 MHz)",
-  "est_s": 20
+  "est_s": 20,
+  "gscn_total": 66
  },
  {
   "band": 28,
   "name": "n28  (703\u2013748 / 758\u2013803 MHz)",
-  "est_s": 31
+  "est_s": 31,
+  "gscn_total": 102
  },
  {
   "band": 38,
   "name": "n38  (2570\u20132620 MHz TDD)",
-  "est_s": 34
+  "est_s": 34,
+  "gscn_total": 114
  },
  {
   "band": 40,
   "name": "n40  (2300\u20132400 MHz TDD)",
-  "est_s": 72
+  "est_s": 72,
+  "gscn_total": 240
  },
  {
   "band": 41,
   "name": "n41  (2496\u20132690 MHz TDD)",
-  "est_s": 94
+  "est_s": 94,
+  "gscn_total": 313
  },
  {
   "band": 66,
   "name": "n66  (1710\u20131780 / 2110\u20132200 MHz)",
-  "est_s": 126
+  "est_s": 126,
+  "gscn_total": 420
  },
  {
   "band": 77,
   "name": "n77  (3300\u20134200 MHz TDD)",
-  "est_s": 186
+  "est_s": 186,
+  "gscn_total": 619
  },
  {
   "band": 78,
   "name": "n78  (3300\u20133800 MHz TDD)",
-  "est_s": 102
+  "est_s": 102,
+  "gscn_total": 341
  },
  {
   "band": 79,
   "name": "n79  (4400\u20135000 MHz TDD)",
-  "est_s": 8
+  "est_s": 8,
+  "gscn_total": 26
  }
 ]

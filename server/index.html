@@ -212,13 +212,13 @@ function scanTick(){
   fetch('/scan/status').then(function(r){ return r.json(); }).then(function(st){
     var run = st.state === 'running', msg = $('scanmsg'), pg = $('scanprog'), res = $('scanres');
     $('scango').style.display = run ? 'none' : ''; $('scancancel').style.display = run ? '' : 'none'; $('scanband').disabled = $('scangain').disabled = run;
-    $('cellsel').disabled = run; pg.style.display = 'none'; msg.className = '';
+    $('cellsel').disabled = run; pg.style.display = run ? '' : 'none'; pg.removeAttribute('value'); msg.className = '';   // no value = indeterminate
     if (run) {
       var el = Math.round(st.elapsed || (Date.now() / 1000 - st.started));
-      if (st.phase === 'scan' && st.scan) { var sc = st.scan; pg.style.display = ''; pg.value = Math.max(0, Math.min(1, (sc.gscn - sc.lo) / Math.max(1, sc.hi - sc.lo)));
-        msg.textContent = 'scanning n' + st.band + ' at ' + st.gain + ' dB: pass ' + sc.pass_no + ' (' + sc.scs_khz + ' kHz SSB), GSCN ' + sc.gscn + ' of ' + sc.lo + '–' + sc.hi + ', ' + sc.hits + ' hit(s), ' + el + ' s'; }
-      else if (st.phase === 'sib1') { msg.textContent = 'reading SIB1 (PLMN) of cell ' + (st.cell ? st.cell.no + '/' + st.cell.of + ', PCI ' + st.cell.pci : '') + ', ' + el + ' s'; }
-      else msg.textContent = 'starting (' + (st.phase || '') + ') ...';
+      if (st.phase === 'scan' && st.scan) { var sc = st.scan; if (sc.total) pg.value = Math.max(0, Math.min(1, sc.done / sc.total));
+        msg.textContent = 'scanning n' + st.band + ' at ' + st.gain + ' dB: ' + (sc.total ? Math.round(100 * sc.done / sc.total) + ' %, ' : '') + 'pass ' + sc.pass_no + ' (' + sc.scs_khz + ' kHz SSB), GSCN ' + sc.gscn + ' (' + sc.lo + '–' + sc.hi + '), ' + sc.hits + ' hit(s), ' + el + ' s'; }
+      else if (st.phase === 'sib1') { if (st.cell) pg.value = (st.cell.no - 1) / st.cell.of; msg.textContent = 'reading SIB1 (PLMN) of cell ' + (st.cell ? st.cell.no + '/' + st.cell.of + ', PCI ' + st.cell.pci : '') + ', ' + el + ' s'; }
+      else msg.textContent = st.phase === 'scan' ? 'starting nrscan (opening the B210) ... ' + el + ' s' : 'stopping nrscope and freeing the B210 ... ' + el + ' s';
     } else if (st.state === 'done') msg.textContent = 'n' + st.band + ' at ' + st.gain + ' dB: ' + (st.results || []).length + ' cell(s); nrscan ' + Math.round(st.timing.sweep_s) + ' s + SIB1 ' + Math.round(st.timing.sib1_s) + ' s = ' + Math.round(st.timing.total_s) + ' s';
     else if (st.state === 'error') { msg.className = 'err'; msg.textContent = 'scan failed: ' + (st.error || 'error'); }
     else if (st.state === 'cancelled') msg.textContent = 'scan cancelled';

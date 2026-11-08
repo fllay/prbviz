@@ -27,6 +27,8 @@ if A.gain is not None: cfg_text = re.sub(r'(?m)^(\s*rx_gain:\s*)[0-9.]+', r'\g<1
 band = A.band or int((re.search(r'(?m)^\s*band_list:\s*\[(\d+)', cfg_text) or [0, 0])[1])
 gain = A.gain if A.gain is not None else float((re.search(r'(?m)^\s*rx_gain:\s*([0-9.]+)', cfg_text) or [0, 0])[1])
 
+try: BAND_GSCN = next(x['gscn_total'] for x in json.load(open(os.path.join(ROOT, 'config', 'bands.json'))) if x['band'] == band)
+except Exception: BAND_GSCN = None
 t_start = time.time()
 ST = dict(state='running', pid=os.getpid(), started=t_start, band=band, gain=gain, phase='stopping', scan=None, cell=None, results=[], timing={})
 def save():
@@ -52,7 +54,7 @@ def sweep_progress(path):
     gs = re.findall(r'Start scaning GSCN number (\d+)', txt)
     if passes and gs:
         _, sidx, lo, hi = passes[-1]
-        ST['scan'] = dict(pass_no=len(passes), scs_khz=15 << int(sidx), lo=int(lo), hi=int(hi), gscn=int(gs[-1]), hits=txt.count('Cell Found! (maybe'))
+        ST['scan'] = dict(pass_no=len(passes), scs_khz=15 << int(sidx), lo=int(lo), hi=int(hi), gscn=int(gs[-1]), hits=txt.count('Cell Found! (maybe'), done=len(gs), total=BAND_GSCN)
 
 def stop_radio():
     subprocess.run([os.path.join(ROOT, 'scripts', 'stop_nrscope.sh' if A.keep_server else 'stop.sh')], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

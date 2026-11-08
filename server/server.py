@@ -685,7 +685,8 @@ def make_handler(hub, meta_path):
             cid = body.get('id')
             if cid not in [c['id'] for c in load_cells()]:
                 return self._jsend(400, dict(error='unknown cell'))
-            if cid == current_cell() and not body.get('force'):
+            alive = subprocess.run(['pgrep', '-f', 'nrscope_loop.sh'], stdout=subprocess.DEVNULL).returncode == 0     # after a scan nrscope is stopped: selecting the current cell restarts it
+            if cid == current_cell() and alive and not body.get('force'):
                 return self._jsend(200, dict(ok=True, same=True, current=cid))
             log = open(os.path.join(ROOT, 'run', 'switch.log'), 'ab')
             subprocess.Popen([os.path.join(ROOT, 'scripts', 'switch.sh'), cid], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
