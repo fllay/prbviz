@@ -99,6 +99,15 @@ def make_cell_files(st, r):
     name = 'n%s scan: PCI %d, %.2f MHz%s' % (st.get('band', '?'), r['pci'], r['freq_hz'] / 1e6, (', PLMN ' + ' '.join(r['plmn'])) if r.get('plmn') else '')
     meta = dict(name=name, pci=r['pci'], scs_khz=r['scs_khz'], slots_per_frame=10 * r['scs_khz'] // 15, center_mhz=r['freq_hz'] / 1e6,
                 align=dict(mode='none'), plmn=r.get('plmn'), tac=r.get('tac'), nci=r.get('nci'), scanned=True)
+    try:                                           # TDD pattern, SSB, CORESET0, carrier size and slot alignment from the cell's MIB / SIB1 (cellmeta.py)
+        import cellmeta
+        sib = r.get('sib1')
+        if not sib:                                # result of an older scan: read the SIB1 from the log of the decode run
+            lp = os.path.join(SCAN_DIR, 'cell_gscn%d' % r['gscn'], 'nrscope.log')
+            sib = cellmeta.parse_sib1_params(open(lp, errors='replace').read()) if os.path.exists(lp) else {}
+        meta.update(cellmeta.build_meta(r, sib))
+    except Exception as ex:
+        print('make_cell_files: no overlays for %s (%s)' % (cid, ex), flush=True)
     with open(os.path.join(d, 'meta.json'), 'w') as f:
         json.dump(meta, f, indent=1)
     return cid, name, os.path.join(d, 'config.yaml'), os.path.join(d, 'meta.json')

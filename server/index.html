@@ -350,7 +350,7 @@ $('cellsel').onchange = function(){
 };
 
 // ---- scan panel: GET /bands, POST /scan, poll /scan/status, POST /view ----
-var scanPoll = null;
+var scanPoll = null, scanT0 = 0;           // scanT0: when Start was pressed (a poll right after it can still return the previous, finished job)
 function jpost(url, obj){ return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj || {}) }).then(function(r){ return r.json().then(function(j){ return { ok: r.ok, j: j }; }); }); }
 function td(tr, t, tag){ var e = document.createElement(tag || 'td'); e.textContent = t; tr.appendChild(e); return e; }
 function openScan(){
@@ -365,7 +365,7 @@ function closeScan(){ $('scanbox').style.display = 'none'; if (scanPoll) { clear
 $('scanbtn').onclick = openScan; $('scanclose').onclick = closeScan;
 $('scango').onclick = function(){
   var band = parseInt($('scanband').value, 10), gain = parseFloat($('scangain').value);
-  jpost('/scan', { band: band, gain: gain }).then(function(x){ if (!x.ok) $('scanmsg').textContent = 'Could not start: ' + (x.j.error || 'error'); else scanTick(); });
+  jpost('/scan', { band: band, gain: gain }).then(function(x){ if (!x.ok) $('scanmsg').textContent = 'Could not start: ' + (x.j.error || 'error'); else { scanT0 = Date.now(); if (!scanPoll) scanPoll = setInterval(scanTick, 1000); scanTick(); } });
 };
 $('scancancel').onclick = function(){ jpost('/scan/cancel').then(scanTick); };
 function viewCell(r){
@@ -406,7 +406,7 @@ function scanTick(){
       });
       res.appendChild(tb);
     } else if (st.state === 'done') res.textContent = 'No cell found. Try another gain (40–60 dB) or another band.';
-    if (!run && scanPoll && st.state !== 'none') { clearInterval(scanPoll); scanPoll = null; }
+    if (!run && scanPoll && st.state !== 'none' && Date.now() - scanT0 > 8000) { clearInterval(scanPoll); scanPoll = null; }   // not within 8 s of Start: the new job may not have written job.json yet
     if (!run) loadCells();
   }).catch(function(){});
 }

@@ -368,8 +368,19 @@ The **Scan…** button in the top bar opens a panel: pick a band (n1, n3, n7, n8
    and restarts the server and nrscope on that cell (`scripts/switch.sh --custom`). The scanned cell then appears in the cell dropdown.
 
 If the scanned cell has the same PCI and SSB frequency as a cell in `config/cells.json` (e.g. the n78 testbed, PCI 1, GSCN 7835), **View** switches to that cell with its saved config and meta, so all overlays are there.
-Otherwise a scanned cell has no hand-written `meta.json`, so the viewer shows the grid, the PBCH constellation and the decoded MIB, but no TDD strip, slot format, SSB/CORESET0 boxes or slot/SFN alignment (`align.mode = none`).
-For a cell you will watch often, copy `run/auto/<id>/` into `config/`, write the SSB/CORESET0/TDD description like `config/meta_n41_pci610.json`, and add it to `config/cells.json`.
+Otherwise **View** builds the overlay description from what the scan already decoded (`server/cellmeta.py`, FR1, SSB and common SCS equal at 15 or 30 kHz), so a scanned cell gets the TDD strip and slot format, SSB boxes with beam numbers, CORESET0 / SIB1 occasions, the carrier size and the slot / SFN alignment:
+
+| Overlay | Derived from |
+|---|---|
+| TDD strip, slot format | SIB1 `tdd-UL-DL-ConfigurationCommon` (pattern 1 + pattern 2) |
+| SSB boxes, beam numbers, period | SIB1 `ssb-PositionsInBurst` and `ssb-PeriodicityServingCell`; SSB symbols per case A / C (`{2,8}+14n`), case B for 30 kHz FDD |
+| SSB PRBs | `offsetToPointA` and the MIB `k_SSB` (38.211 7.4.3.1), 20 PRB wide |
+| CORESET0 / SIB1 occasions | MIB `controlResourceSetZero` / `searchSpaceZero` with TS 38.213 tables 13-1..13-4 and 13-11, one occasion per SSB beam in the bitmap |
+| Carrier size | SIB1 `carrierBandwidth` and `offsetToCarrier` |
+| Slot / SFN alignment | locks nrscope's slot counter to the SSB burst (period = SSB period, width = slots of the burst, at most 3) |
+
+If the SIB1 of a cell was not decoded (`not decoded` in the result table), or its SSB and common SCS differ, the cell keeps only the grid, the PBCH constellation and the decoded MIB (`align.mode = none`). Checked on n41 PCI 416 (SSB beams 0, 1, 3, 4; TDD `DDDSUUDDDD`): the SSB boxes and the four SIB1 CORESET0 boxes sit on the measured energy, and the same code reproduces the hand-written TDD, SSB and CORESET0 slots of `config/meta_n41_pci610.json`.
+For a cell you will watch often, copy `run/auto/<id>/` into `config/` and add it to `config/cells.json` (the generated `meta.json` can be edited by hand, e.g. like `config/meta_n41_pci610.json`).
 
 API (same-origin POST only): `GET /bands`, `POST /scan {band, gain}`, `GET /scan/status` (also in `run/scan/job.json`), `POST /scan/cancel`, `POST /view {gscn, pci}` (only cells of the last finished scan).
 `/select` and `/view` are refused while a scan runs. By hand: `scripts/scan_plmn.py [config.yaml] [--band N] [--gain dB] [--json file] [--keep-server]`.

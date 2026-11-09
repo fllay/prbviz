@@ -12,6 +12,8 @@ Progress and results are written to --json while it runs (the viewer polls it). 
 import argparse, csv, json, os, re, signal, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, 'server'))
+import cellmeta      # SIB1 layout fields (carrier, SSB bitmap, TDD) for the viewer's overlays
 ap = argparse.ArgumentParser()
 ap.add_argument('config', nargs='?', default=os.path.join(ROOT, 'config', 'testbed_n78.yaml'))
 ap.add_argument('--band', type=int); ap.add_argument('--gain', type=float)
@@ -45,7 +47,7 @@ def parse_sib1(text):
     return plmns, (int(tac.group(1), 2) if tac else None), (int(ci.group(1), 2) if ci else None)
 def parse_mib(text):
     m = re.search(r'MIB: sfn=(\d+) ssb_idx=(\d+) hrf=\w+ scs=(\d+) ssb_offset=(\d+) dmrs_typeA_pos=pos(\d) coreset0=(\d+) ss0=(\d+) barred=(\w)', text)
-    return dict(ssb_idx=int(m.group(2)), k_ssb=int(m.group(4)), coreset0=int(m.group(6)), ss0=int(m.group(7)), barred=m.group(8) == 'y') if m else None
+    return dict(ssb_idx=int(m.group(2)), k_ssb=int(m.group(4)), coreset0=int(m.group(6)), ss0=int(m.group(7)), barred=m.group(8) == 'y', scs_common=int(m.group(3))) if m else None
 
 def sweep_progress(path):
     try: txt = open(path, errors='replace').read()
@@ -111,7 +113,7 @@ def main():
         except subprocess.TimeoutExpired: os.killpg(pr.pid, signal.SIGKILL)
         txt = open(lp, errors='replace').read(); plmns, tac, nci = parse_sib1(txt) if ok else ([], None, None)
         ST['results'].append(dict(gscn=m['gscn'], freq_hz=m['freq_hz'], pci=m['pci'], scs_khz=m['scs_khz'], hits=m['hits'], ok=ok, plmn=plmns, tac=tac, nci=nci,
-                                  sib1_s=round(dt, 1) if ok else None, mib=parse_mib(txt)))
+                                  sib1_s=round(dt, 1) if ok else None, mib=parse_mib(txt), sib1=cellmeta.parse_sib1_params(txt) if ok else None))
         save(); say('   -> %s in %.1f s' % ('SIB1 decoded' if ok else 'SIB1 NOT decoded', dt)); time.sleep(3)
     ST['timing']['sib1_s'] = round(time.time() - t1, 1); ST['timing']['total_s'] = round(time.time() - t_start, 1)
     ST['phase'] = 'done'; ST['state'] = 'done'; ST['cell'] = None; save()
