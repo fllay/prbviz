@@ -6,26 +6,7 @@ A web viewer that shows what a 5G NR cell is doing on the air, in real time: a p
 It is a trimmed, self-contained copy of **NR-Scope** (Princeton, srsRAN-4G based) with a few taps added,
 and a small web server that turns the tapped data into a labelled browser view.
 
-```
-                        ┌── Host: Intel Core i5-13500H, 16 threads ─────────────────────────────────────────┐
-                        │   nrscope                                                                         │
-┌─────────────┐ IQ, USB3│   ┌────────────────────────┐                                                      │
-│ USRP B210   │────────────►│ SSB sync, PBCH decode  │──┐                                                   │
-│ RF front end│         │   │ MIB, SNR, RSRP, CFO    │  │                                                   │
-└─────────────┘         │   └────────────────────────┘  │                                                   │          ┌────────────────────┐
-                        │                               │                         ┌──────────────────────┐  │          │ Browser            │
-                        │   ┌────────────────────────┐  │  ┌────────────────┐     │ server.py            │  │SSE :8080 │ index.html canvas  │
-                        │   │ SIB1, RACH, DCI decode │──┼─►│ ZeroMQ PUB     │────►│ SUB, reorder by slot │────────────►│ waterfall, PBCH    │
-                        │   │ RNTI, CCEs, MCS, RIV   │  │  │ 127.0.0.1:5556 │     │ SSE relay, /select   │  │          │ panel, Signal block│
-                        │   └────────────────────────┘  │  └────────────────┘     └──────────────────────┘  │          │                    │
-                        │                               │                                                   │          └────────────────────┘
-                        │   ┌────────────────────────┐  │                                                   │
-                        │   │ Power taps             │──┘                                                   │
-                        │   │ per PRB, per symbol    │                                                      │
-                        │   └────────────────────────┘                                                      │
-                        │                                                                                   │
-                        └───────────────────────────────────────────────────────────────────────────────────┘
-```
+![prbviz block diagram: USRP B210, nrscope, ZeroMQ, server.py, browser](docs/block_diagram.svg)
 
 Topics on the PUB socket: `prb` and `sym` (power per PRB, per symbol), `pbchc` (PBCH constellation, MIB), `meas` (SNR, RSRP, CFO), `dci` (RNTI, CCEs, MCS, RIV).
 
@@ -133,7 +114,7 @@ Tick **REG/CCE/DMRS** (per-symbol view, window of about 10 slots or less) to see
 | `config/` | nrscope configs and viewer meta files: `testbed_n78.yaml`, `meta_testbed.json`, `n41_pci610.yaml`, `meta_n41_pci610.json`, `n41_reference.yaml` |
 | `scripts/` | `build.sh`, `launch_build.sh` (background build), `start.sh`, `stop.sh`, `scan.sh`, `nrscope_loop.sh` |
 | `run/` | runtime dir: config copy, pids, logs |
-| `docs/` | decoded MIB/SIB1 notes |
+| `docs/` | decoded MIB/SIB1 notes, `block_diagram.svg` (the block diagram at the top, drawn on a whiteboard) |
 | `old/` | local backups of every file changed during development (not in the git repo) |
 
 Files changed or added in nrscope / srsRAN:
