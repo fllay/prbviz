@@ -25,6 +25,9 @@
 #include <liquid/liquid.h>
 #include <pthread.h>
 
+// prbviz: tap on the measurements of every tracked SSB (RSRP, EPRE, N0, SNR, CFO, delay); set by nrscope (prb_power_dump.cc)
+void (*srsran_ssb_meas_cb)(const srsran_csi_trs_measurements_t* meas, bool crc_ok, uint32_t ssb_idx, uint32_t sfn) = NULL;
+
 #define UE_SYNC_NR_DEFAULT_CFO_ALPHA 0.1
 pthread_mutex_t lock;
 
@@ -251,6 +254,9 @@ static int ue_sync_nr_run_track(srsran_ue_sync_nr_t* q, cf_t* buffer)
   }
   if (pbch_msg.crc) {
     trk_crc++;
+  }
+  if (srsran_ssb_meas_cb != NULL) {
+    srsran_ssb_meas_cb(&measurements, pbch_msg.crc, q->ssb_idx, q->sfn);
   }
   if (trk_dbg && (trk_opp % 25) == 1) {
     printf("TRACKDBG opp=%u crc_ok=%u crc=%d delay_us=%.3f cfo_hz=%.1f nof_re=%u\n", trk_opp, trk_crc, (int)pbch_msg.crc, measurements.delay_us,

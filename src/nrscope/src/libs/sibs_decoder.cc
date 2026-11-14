@@ -172,7 +172,7 @@ int SIBsDecoder::DecodeandParseSIB1fromSlot(srsran_slot_cfg_t* slot,
     return SRSRAN_ERROR;
   }
 
-  PRBPowerDump::send_dci_ctx(&dci_sibs.ctx, false, ((state->cur_sf_round * 1024ULL + state->cur_sfn) * 20ULL) + slot->idx, state->cur_sfn, slot->idx);
+  PRBPowerDump::send_dci_dl(&dci_sibs, ((state->cur_sf_round * 1024ULL + state->cur_sfn) * 20ULL) + slot->idx, state->cur_sfn, slot->idx);
   if (quiet) {
     {
       std::lock_guard<std::mutex> lk(dci_si_mx);

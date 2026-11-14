@@ -170,6 +170,24 @@
       <span class="k" style="margin-top:4px">DECODED MIB</span>
       <div class="mib"><div><span>SFN</span><span id="sd_m0">–</span></div><div><span>SSB index</span><span id="sd_m1">–</span></div><div><span>SCS</span><span id="sd_m2">–</span></div><div><span>k_SSB</span><span id="sd_m3">–</span></div><div><span>DM-RS typeA pos</span><span id="sd_m4">–</span></div><div><span>Half frame</span><span id="sd_m5">–</span></div><div><span>CORESET0 idx</span><span id="sd_m6">–</span></div><div><span>SearchSpace0 idx</span><span id="sd_m7">–</span></div><div><span>Cell barred</span><span id="sd_m8">–</span></div><div><span>Intra-freq reselection</span><span id="sd_m9">–</span></div></div>
     </div>
+    <div style="display:flex;flex-direction:column;gap:2px">
+      <span class="k" style="margin-top:4px">SIGNAL (DOWNLINK)</span>
+      <div class="mib">
+        <div title="Measured by nrscope on the SSB: PBCH DMRS power against its noise estimate"><span>SNR (SSB)</span><span id="sd_s0">–</span></div>
+        <div title="Estimate: SNR = -20 log10(EVM of the last 8 PBCH frames)"><span>SNR (from PBCH EVM)</span><span id="sd_s1">–</span></div>
+        <div title="Relative to the ADC full scale at the current RX gain; not calibrated to dBm"><span>SSB RSRP</span><span id="sd_s2">–</span></div>
+        <div title="Carrier frequency offset measured on the SSB"><span>CFO</span><span id="sd_s3">–</span></div>
+        <div title="PBCH CRC result of the last 8 frames"><span>PBCH CRC (last 8)</span><span id="sd_s4">–</span></div>
+        <div title="DCIs decoded per second, all RNTI types"><span>DCI rate</span><span id="sd_s5">–</span></div>
+        <div title="MCS index of the last C-RNTI downlink grant, and the mean of the new transmissions of the last 60 s. Table 1: 0-4 QPSK, 5-10 16QAM, 11-19 64QAM"><span>DL MCS (UE grants)</span><span id="sd_s6">–</span></div>
+        <div title="Same for uplink grants. Assumes MCS table 1"><span>UL MCS (UE grants)</span><span id="sd_s7">–</span></div>
+        <div title="PRBs of the last C-RNTI downlink grant (resource allocation type 1)"><span>DL grant size</span><span id="sd_s8">–</span></div>
+        <div title="Downlink grants of the last 60 s that repeat the NDI of the same HARQ process, i.e. retransmissions"><span>DL retx (60 s)</span><span id="sd_s9">–</span></div>
+        <div title="DCIs sent to a TC-RNTI (Msg4 of a random access) in the last 60 s: one per UE attach attempt, or more"><span>Msg4 DCIs (60 s)</span><span id="sd_s10">–</span></div>
+        <div title="C-RNTI grants decoded in the last 60 s (only UEs whose Msg4 nrscope saw)"><span>UE grants (60 s)</span><span id="sd_s11">–</span></div>
+      </div>
+      <small style="color:#7f93a5;font-size:11px;line-height:1.4;margin-top:6px">SNR (SSB) is measured by nrscope; the EVM value is only an estimate. MCS and grant sizes cover UEs that nrscope has learned from a Msg4 and assume MCS table 1. CQI and uplink SINR are sent by the UE on the uplink, so a downlink sniffer cannot see them.</small>
+    </div>
   </aside>
 </div>
 <div id="hover"></div>
@@ -194,8 +212,19 @@ var ring = null, ringAbs = new Float64Array(R).fill(-1), gainRing = new Int16Arr
 var sibQ = [], iqOn = true;
 // exact PDCCH decisions from nrscope: dciAt[abs slot] = [[abs, rnti, rnti type, format, coreset id, log2 AL, first CCE, dir (0 DL, 1 UL), ss type], ...]
 var dciAt = {}, dciN = 0, dciLast = 0;
+var sigT = 0, sigN = 0, sigRate = 0, msg4T = [];   // signal block: DCI rate and Msg4 (TC-RNTI) DCIs of the last 60 s
+var meas = null, grants = [], ndiMap = {}, ndiN = 0;   // SSB measurements from nrscope; C-RNTI grants {t, dir (0 DL, 1 UL), mcs, retx, prb} of the last 60 s
 function dciIn(list){
-  for (var i = 0; i < list.length; i++) { var e = list[i]; (dciAt[e[0]] = dciAt[e[0]] || []).push(e); }
+  for (var i = 0; i < list.length; i++) { var e = list[i]; (dciAt[e[0]] = dciAt[e[0]] || []).push(e); if (e[2] === 'TC') msg4T.push(performance.now());
+    if (e[2] === 'C' && e.length >= 16) {                       // grant contents of a UE (C-RNTI): mcs, ndi, rv, pid, tda, bwp, fda at e[9..15]
+      var key = e[1] + '/' + e[12] + '/' + e[7], prev = ndiMap[key], N = e[14] || (meta && meta.carrier_prbs) || NP || 0, Ln = 0;
+      if (++ndiN > 5000) { ndiMap = {}; ndiN = 0; }
+      ndiMap[key] = e[10];
+      if (N > 0) { var ra = Math.floor(e[15] / N), rb = e[15] % N; Ln = (ra + rb + 1 <= N) ? ra + 1 : N - ra + 1; }   // RIV of resource allocation type 1
+      grants.push({t: performance.now(), dir: e[7], mcs: e[9], retx: prev !== undefined && prev === e[10], prb: Ln});
+    } }
+  while (msg4T.length && performance.now() - msg4T[0] > 60000) msg4T.shift();
+  while (grants.length && performance.now() - grants[0].t > 60000) grants.shift();
   dciLast = performance.now();
   if (((dciN += list.length) & 255) < list.length) for (var k in dciAt) if (+k < newest - R) delete dciAt[k];
 }
@@ -237,6 +266,14 @@ function b64(s){ var bin = atob(s), n = bin.length, u = new Uint8Array(n); for (
 // ---- PBCH constellation + decoded MIB: docked panel right of the grid (equalised QPSK symbols from nrscope's PBCH decoder, one frame per SSB; newest frames brightest)
 var sideCv = $('ccv'), sideCtx = sideCv.getContext('2d'), sideTxt = {};
 function setTxt(id, t){ if (sideTxt[id] !== t) { sideTxt[id] = t; $(id).textContent = t; } }
+function grantStat(dir){      // last grant, mean MCS of the new transmissions, retransmissions and count of one direction in the last 60 s
+  var n = 0, sum = 0, nn = 0, rt = 0, last = null;
+  for (var i = 0; i < grants.length; i++) {
+    var g = grants[i]; if (g.dir !== dir) continue;
+    n++; last = g; if (g.retx) rt++; else { sum += g.mcs; nn++; }
+  }
+  return n ? {last: last, avg: nn ? sum / nn : null, retx: rt, n: n} : null;
+}
 function drawSide(){
   if (!iqOn) return;
   var cs = 328, dpr = window.devicePixelRatio || 1, pxs = Math.round(cs * dpr), c = sideCtx, i, j;
@@ -274,6 +311,25 @@ function drawSide(){
   setTxt('sd_age', lastS ? ((performance.now() - lastS.at) / 1000).toFixed(1) + ' s' : '–');
   var f = mb ? [mb.sfn, mb.ssb, mb.scs + ' kHz', mb.kssb, mb.dmrs, mb.hrf, mb.cs0, mb.ss0, mb.barred ? 'yes' : 'no', mb.intra ? 'allowed' : 'not allowed'] : [];
   for (i = 0; i < 10; i++) setTxt('sd_m' + i, mb ? String(f[i]) : '–');
+  var ne = 0, se = 0, okn = 0, tnow = performance.now();
+  for (i = 0; i < sibQ.length; i++) { if (sibQ[i].evm != null) { se += sibQ[i].evm; ne++; } if (sibQ[i].crc) okn++; }
+  var evmAvg = ne ? se / ne : 0, mf = meas && tnow - meas.at < 15000 ? meas : null;
+  setTxt('sd_s0', mf && mf.snr != null ? mf.snr.toFixed(1) + ' dB' : '–');
+  setTxt('sd_s1', evmAvg > 0 ? (-20 * Math.log10(evmAvg / 100)).toFixed(1) + ' dB' : '–');
+  setTxt('sd_s2', mf && mf.rsrp != null ? mf.rsrp.toFixed(1) + ' dBFS' : '–');
+  setTxt('sd_s3', mf && mf.cfo != null ? (mf.cfo >= 0 ? '+' : '') + mf.cfo + ' Hz' : '–');
+  setTxt('sd_s4', sibQ.length ? okn + ' / ' + sibQ.length + ' OK' : '–');
+  if (tnow - sigT >= 1000) { sigRate = sigT ? (dciN - sigN) * 1000 / (tnow - sigT) : 0; sigT = tnow; sigN = dciN; }
+  while (msg4T.length && tnow - msg4T[0] > 60000) msg4T.shift();
+  while (grants.length && tnow - grants[0].t > 60000) grants.shift();
+  setTxt('sd_s5', dciLast && tnow - dciLast < 5000 ? sigRate.toFixed(0) + ' /s' : '–');
+  var gd = grantStat(0), gu = grantStat(1);
+  setTxt('sd_s6', gd ? gd.last.mcs + (gd.avg != null ? ' (avg ' + gd.avg.toFixed(1) + ')' : '') : '–');
+  setTxt('sd_s7', gu ? gu.last.mcs + (gu.avg != null ? ' (avg ' + gu.avg.toFixed(1) + ')' : '') : '–');
+  setTxt('sd_s8', gd && gd.last.prb ? gd.last.prb + ' PRB' : '–');
+  setTxt('sd_s9', gd ? gd.retx + ' of ' + gd.n + ' (' + Math.round(100 * gd.retx / gd.n) + ' %)' : '–');
+  setTxt('sd_s10', dciLast ? String(msg4T.length) : '–');
+  setTxt('sd_s11', dciLast ? (gd ? gd.n : 0) + ' DL / ' + (gu ? gu.n : 0) + ' UL' : '–');
 }
 
 // ---- data in
@@ -282,6 +338,7 @@ if (!window.__DEMO) fetch('/meta').then(function(r){ return r.json(); }).then(se
 
 function onMsg(m){
   if (m.dci) { dciIn(m.dci); return; }
+  if (m.meas) { m.meas.at = performance.now() - (m.meas.age || 0) * 1000; meas = m.meas; return; }
   if (m.pbch) { m.pbch.at = performance.now() - (m.pbch.age || 0) * 1000; sibQ.push(m.pbch); if (sibQ.length > 8) sibQ.shift(); return; }
   var u = b64(m.data);
   if (m.align !== undefined) { serverAlign = true; serverShift = m.align; serverMode = m.amode || 'ssb'; }

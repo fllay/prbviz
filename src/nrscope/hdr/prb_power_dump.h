@@ -32,7 +32,21 @@ void send_pdsch_constellation(const cf_t* d, uint32_t n, uint32_t mod_bits, bool
 // A DCI found by the PDCCH blind search (CRC ok), ZeroMQ topic "dci" (header version 7, "nsym" field = 1), published when NRSCOPE_DCI is set.
 // 22-byte header, then: u16 rnti | u8 rnti_type | u8 format | u8 coreset_id | u8 L (log2 of the aggregation level) | u16 ncce (first CCE) |
 //                       u8 dir (0 = DL grant, 1 = UL grant) | u8 ss_type | u16 reserved
-void send_dci_ctx(const srsran_dci_ctx_t* ctx, bool ul, uint64_t abs_slot, uint32_t sfn, uint32_t slot_idx);
+// Grant contents of a DCI (version 8 of the "dci" message adds them after the 12 payload bytes above, 24 payload bytes in all):
+//   u8 flags (bit0 = grant fields valid) | u8 mcs | u8 ndi | u8 rv | u8 pid (HARQ process) | u8 time domain assignment | u16 bwp (PRBs of the BWP the
+//   frequency assignment refers to, 0 = unknown) | u32 frequency domain assignment (RIV for resource allocation type 1)
+struct DciGrant {
+  uint8_t  mcs, ndi, rv, pid, tda;
+  uint16_t bwp;
+  uint32_t fda;
+};
+void send_dci_ctx(const srsran_dci_ctx_t* ctx, bool ul, uint64_t abs_slot, uint32_t sfn, uint32_t slot_idx, const DciGrant* g = nullptr);
+void send_dci_dl(const srsran_dci_dl_nr_t* d, uint64_t abs_slot, uint32_t sfn, uint32_t slot_idx);
+void send_dci_ul(const srsran_dci_ul_nr_t* d, uint64_t abs_slot, uint32_t sfn, uint32_t slot_idx);
+
+// Measurements of a tracked SSB, ZeroMQ topic "meas" (header version 8, flags bit0 = PBCH CRC ok, "sfn" = SFN). After the header: 6 x float32
+// (rsrp_dB, epre_dB, n0_dB, snr_dB, cfo_hz, delay_us; dB values relative to full scale), u32 nof_re, u32 ssb_idx.
+void ssb_meas_tap(const srsran_csi_trs_measurements_t* m, bool crc, uint32_t ssb_idx, uint32_t sfn);
 
 void close();
 

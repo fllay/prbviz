@@ -18,6 +18,7 @@
 
 extern "C" {
 extern void (*srsran_pbch_nr_const_cb)(const cf_t* symbols, uint32_t nof_symbols, bool crc_ok, const uint32_t* mib_fields);
+extern void (*srsran_ssb_meas_cb)(const srsran_csi_trs_measurements_t* meas, bool crc_ok, uint32_t ssb_idx, uint32_t sfn);
 }
 
 namespace PRBPowerDump {
@@ -366,19 +367,19 @@ void send_pdsch_constellation(const cf_t* d, uint32_t n, uint32_t mod_bits, bool
 }
 
 
-void send_dci_ctx(const srsran_dci_ctx_t* c, bool ul, uint64_t abs_slot, uint32_t sfn, uint32_t slot_idx)
+void send_dci_ctx(const srsran_dci_ctx_t* c, bool ul, uint64_t abs_slot, uint32_t sfn, uint32_t slot_idx, const DciGrant* g)
 {
   static const bool on = std::getenv("NRSCOPE_DCI") != nullptr;
   ZmqPub& z = zpub();
   if (!on || !z.sock || c == nullptr) {
     return;
   }
-  uint8_t  buf[22 + 12];
+  uint8_t  buf[22 + 24];
   uint16_t magic = 0x5052, sfn16 = (uint16_t)sfn, zero16 = 0, one16 = 1, rnti = c->rnti, ncce = (uint16_t)c->location.ncce;
   int16_t  gain = (int16_t)std::lround(g_rx_gain.load() * 10.0f);
   memset(buf, 0, sizeof(buf));
   memcpy(buf + 0, &magic, 2);
-  buf[2] = 7;
+  buf[2] = 8;
   buf[3] = 1;
   memcpy(buf + 4, &abs_slot, 8);
   memcpy(buf + 12, &sfn16, 2);
@@ -394,6 +395,16 @@ void send_dci_ctx(const srsran_dci_ctx_t* c, bool ul, uint64_t abs_slot, uint32_
   memcpy(buf + 28, &ncce, 2);
   buf[30] = ul ? 1 : 0;
   buf[31] = (uint8_t)c->ss_type;
+  if (g != nullptr) {
+    buf[34] = 1;
+    buf[35] = g->mcs;
+    buf[36] = g->ndi;
+    buf[37] = g->rv;
+    buf[38] = g->pid;
+    buf[39] = g->tda;
+    memcpy(buf + 40, &g->bwp, 2);
+    memcpy(buf + 42, &g->fda, 4);
+  }
   z.publish("dci", buf, sizeof(buf));
 }
 
@@ -429,6 +440,45 @@ void pbch_const_tap(const cf_t* d, uint32_t n, bool crc, const uint32_t* mib_fie
     memcpy(buf.data() + 26 + (size_t)n * 2, mib_fields, 40);
   }
   z.publish("pbchc", buf.data(), buf.size());
+}
+
+void send_dci_dl(const srsran_dci_dl_nr_t* d, uint64_t abs_slot, uint32_t sfn, uint32_t slot_idx)
+{
+  DciGrant g = {};
+  g.mcs = (uint8_t)d->mcs; g.ndi = (uint8_t)d->ndi; g.rv = (uint8_t)d->rv; g.pid = (uint8_t)d->pid;
+  g.tda = (uint8_t)d->time_domain_assigment; g.bwp = (uint16_t)d->coreset0_bw; g.fda = d->freq_domain_assigment;
+  send_dci_ctx(&d->ctx, false, abs_slot, sfn, slot_idx, &g);
+}
+
+void send_dci_ul(const srsran_dci_ul_nr_t* d, uint64_t abs_slot, uint32_t sfn, uint32_t slot_idx)
+{
+  DciGrant g = {};
+  g.mcs = (uint8_t)d->mcs; g.ndi = (uint8_t)d->ndi; g.rv = (uint8_t)d->rv; g.pid = (uint8_t)d->pid;
+  g.tda = (uint8_t)d->time_domain_assigment; g.bwp = 0; g.fda = d->freq_domain_assigment;
+  send_dci_ctx(&d->ctx, true, abs_slot, sfn, slot_idx, &g);
+}
+
+// Measurements of a tracked SSB (see the header), called from srsran_ue_sync_nr after srsran_ssb_track().
+void ssb_meas_tap(const srsran_csi_trs_measurements_t* m, bool crc, uint32_t ssb_idx, uint32_t sfn)
+{
+  ZmqPub& z = zpub();
+  if (!z.sock || m == nullptr) {
+    return;
+  }
+  uint8_t  buf[22 + 32];
+  uint16_t magic = 0x5052, sfn16 = (uint16_t)sfn;
+  int16_t  gain = (int16_t)std::lround(g_rx_gain.load() * 10.0f);
+  float    f[6] = {m->rsrp_dB, m->epre_dB, m->n0_dB, m->snr_dB, m->cfo_hz, m->delay_us};
+  memset(buf, 0, sizeof(buf));
+  memcpy(buf + 0, &magic, 2);
+  buf[2] = 8;
+  buf[3] = crc ? 1 : 0;
+  memcpy(buf + 12, &sfn16, 2);
+  memcpy(buf + 16, &gain, 2);
+  memcpy(buf + 22, f, sizeof(f));
+  memcpy(buf + 46, &m->nof_re, 4);
+  memcpy(buf + 50, &ssb_idx, 4);
+  z.publish("meas", buf, sizeof(buf));
 }
 
 void write_slot(const cf_t* sf_symbols, uint32_t nof_prb, uint32_t slot_idx, uint64_t abs_slot, uint32_t sfn,
@@ -527,6 +577,7 @@ const bool g_pbch_tap_registered = [] {
   const char* e = std::getenv("NRSCOPE_PBCHC");
   if (e != nullptr && *e != '\0' && *e != '0') {
     srsran_pbch_nr_const_cb = &PRBPowerDump::pbch_const_tap;
+    srsran_ssb_meas_cb      = &PRBPowerDump::ssb_meas_tap;
   }
   return true;
 }();

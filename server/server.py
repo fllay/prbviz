@@ -295,6 +295,7 @@ class Hub:
         sock.setsockopt(zmq.SUBSCRIBE, b'iq')
         sock.setsockopt(zmq.SUBSCRIBE, b'pbchc')
         sock.setsockopt(zmq.SUBSCRIBE, b'dci')
+        sock.setsockopt(zmq.SUBSCRIBE, b'meas')
         sock.connect(endpoint)             # nrscope BINDs; we may start before or after it and reconnect automatically
         while True:
             if not sock.poll(50):
@@ -313,6 +314,8 @@ class Hub:
                 self.ingest_iq(parts[1])
             elif parts[0] == b'pbchc':
                 self.ingest_pbchc(parts[1])
+            elif parts[0] == b'meas':
+                self.ingest_meas(parts[1])
             else:
                 self.ingest(parts[1])
 
@@ -340,12 +343,16 @@ class Hub:
         if len(d) < 22 + 12:
             return
         magic, ver, _n, abs_slot, sfn, slot_idx, _r, gain, _lo, _np = HDR.unpack_from(d, 0)
-        if magic != 0x5052 or ver != 7:
+        if magic != 0x5052 or ver not in (7, 8):
             self.stat['bad'] += 1
             return
         rnti, rt, fm, cs, L, ncce, dr, ss, _z = struct.unpack_from('<HBBBBHBBH', d, 22)
         ev = [int(abs_slot + self.shift), int(rnti), self.RNTI_T[rt] if rt < len(self.RNTI_T) else str(rt),
               self.DCI_F[fm] if fm < len(self.DCI_F) else str(fm), int(cs), int(L), int(ncce), int(dr), int(ss)]
+        if ver == 8 and len(d) >= 22 + 24:
+            gf, mcs, ndi, rv, pid, tda, bwp, fda = struct.unpack_from('<BBBBBBHI', d, 34)
+            if gf & 1:                                  # grant contents: mcs, ndi, rv, harq pid, time assignment, bwp PRBs (0 = unknown), freq assignment (RIV)
+                ev += [int(mcs), int(ndi), int(rv), int(pid), int(tda), int(bwp), int(fda)]
         self.dci_buf.append(ev)
         self.stat['dci'] = self.stat.get('dci', 0) + 1
 
@@ -397,6 +404,33 @@ class Hub:
         line = json.dumps(msg, separators=(',', ':'))
         self.sib_cache.append((now, msg))
         self.sib_cache = self.sib_cache[-4:]            # PBCH is decoded every SSB period: the newest frames are enough to fill a new page
+        with self.cl_lock:
+            for q_ in list(self.clients):
+                if getattr(q_, 'iq', False):
+                    try:
+                        q_.put_nowait(line)
+                    except queue.Full:
+                        pass
+
+    def ingest_meas(self, d):
+        """Measurements of every tracked SSB from nrscope (RSRP, EPRE, N0, SNR in dB re full scale, CFO, delay) -> one JSON line for the pages (<= 2/s)."""
+        if len(d) < 22 + 32:
+            return
+        magic, ver, flags, abs_slot, sfn, slot_idx, _r, gain, _lo, _np = HDR.unpack_from(d, 0)
+        if magic != 0x5052 or ver != 8:
+            self.stat['bad'] += 1
+            return
+        now = time.time()
+        if now - getattr(self, 'meas_t', 0.0) < 0.5:
+            return
+        rsrp, epre, n0, snr, cfo, dly = struct.unpack_from('<6f', d, 22)
+        nre, ssb = struct.unpack_from('<2I', d, 46)
+        fl = lambda v, k=1: None if (v != v or v in (float('inf'), float('-inf'))) else round(float(v), k)
+        msg = dict(meas=dict(rsrp=fl(rsrp), epre=fl(epre), n0=fl(n0), snr=fl(snr), cfo=fl(cfo, 0), delay=fl(dly, 2), nre=int(nre), ssb=int(ssb),
+                             crc=int(flags & 1), sfn=int(sfn), gain=gain / 10.0))
+        self.meas_t = now
+        self.meas_cache = msg
+        line = json.dumps(msg, separators=(',', ':'))
         with self.cl_lock:
             for q_ in list(self.clients):
                 if getattr(q_, 'iq', False):
@@ -651,6 +685,9 @@ def make_handler(hub, meta_path):
                     for t_, m_ in list(hub.sib_cache):          # replay the last SIB1 constellations (they only exist while the grid timing is good)
                         mm = dict(pbch=dict(m_['pbch'], age=round(time.time() - t_, 1)))
                         q.put_nowait(json.dumps(mm, separators=(',', ':')))
+                    mc = getattr(hub, 'meas_cache', None)
+                    if mc:                                      # newest SSB measurements, with their age
+                        q.put_nowait(json.dumps(dict(meas=dict(mc['meas'], age=round(time.time() - hub.meas_t, 1))), separators=(',', ':')))
                 with hub.cl_lock:
                     hub.clients.append(q)
                     hub.sym_clients = sum(1 for x in hub.clients if getattr(x, 'sym', False))

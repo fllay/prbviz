@@ -414,7 +414,7 @@ int RachDecoder::DecodeandParseMS4fromSlot(srsran_slot_cfg_t* slot, WorkState* s
       return SRSRAN_ERROR;
     }
     // prbviz: only a TC-RNTI DCI whose PDSCH (Msg4) decoded is a real one; the blind search over many RNTIs also yields false CRC matches
-    PRBPowerDump::send_dci_ctx(&dci_rach[dci_id].ctx, false, ((state->cur_sf_round * 1024ULL + state->cur_sfn) * 20ULL) + slot->idx, state->cur_sfn, slot->idx);
+    PRBPowerDump::send_dci_dl(&dci_rach[dci_id], ((state->cur_sf_round * 1024ULL + state->cur_sfn) * 20ULL) + slot->idx, state->cur_sfn, slot->idx);
     if (rach_known) {
       result->found_rach = true;
       result->new_rnti_number += 1;
