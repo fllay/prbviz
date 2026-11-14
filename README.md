@@ -7,11 +7,29 @@ It is a trimmed, self-contained copy of **NR-Scope** (Princeton, srsRAN-4G based
 and a small web server that turns the tapped data into a labelled browser view.
 
 ```
-USRP B210 ──► nrscope ───────────────► ZeroMQ PUB tcp://127.0.0.1:5556 ──► server/server.py ──HTTP :8080──► browser
-              (src/nrscope/.../prb_power_dump.cc)   topics: prb, sym, pbchc      (SUB → reorder by slot → SSE)
+                        ┌── Host: Intel Core i5-13500H, 16 threads ─────────────────────────────────────────┐
+                        │   nrscope                                                                         │
+┌─────────────┐ IQ, USB3│   ┌────────────────────────┐                                                      │
+│ USRP B210   │────────────►│ SSB sync, PBCH decode  │──┐                                                   │
+│ RF front end│         │   │ MIB, SNR, RSRP, CFO    │  │                                                   │
+└─────────────┘         │   └────────────────────────┘  │                                                   │          ┌────────────────────┐
+                        │                               │                         ┌──────────────────────┐  │          │ Browser            │
+                        │   ┌────────────────────────┐  │  ┌────────────────┐     │ server.py            │  │SSE :8080 │ index.html canvas  │
+                        │   │ SIB1, RACH, DCI decode │──┼─►│ ZeroMQ PUB     │────►│ SUB, reorder by slot │────────────►│ waterfall, PBCH    │
+                        │   │ RNTI, CCEs, MCS, RIV   │  │  │ 127.0.0.1:5556 │     │ SSE relay, /select   │  │          │ panel, Signal block│
+                        │   └────────────────────────┘  │  └────────────────┘     └──────────────────────┘  │          │                    │
+                        │                               │                                                   │          └────────────────────┘
+                        │   ┌────────────────────────┐  │                                                   │
+                        │   │ Power taps             │──┘                                                   │
+                        │   │ per PRB, per symbol    │                                                      │
+                        │   └────────────────────────┘                                                      │
+                        │                                                                                   │
+                        └───────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Tested on a Raspberry Pi 5 host with a USRP B210 against an N78 lab gNB (and a commercial n41 cell, config included).
+Topics on the PUB socket: `prb` and `sym` (power per PRB, per symbol), `pbchc` (PBCH constellation, MIB), `meas` (SNR, RSRP, CFO), `dci` (RNTI, CCEs, MCS, RIV).
+
+Tested on an Intel Core i5-13500H (13th gen, 16 threads) host with a USRP B210 against an N78 lab gNB (and a commercial n41 cell, config included).
 
 ![The viewer on the n78 lab testbed: 20-slot window, per-symbol view, paused and scrolled back, constellation docked on the right](docs/viewer_n78_testbed.png)
 
@@ -37,7 +55,7 @@ Dotted lines: the B210 LO and the gNB centre. The cyan label above the CORESET0 
 ## Quick start
 
 ```
-scripts/build.sh                  # once: cmake + make nrscope nrscan   (about 100 s on the Pi)
+scripts/build.sh                  # once: cmake + make nrscope nrscan   (about 100 s on the host)
 scripts/start.sh                  # server + nrscope; open http://<host>:8080/
 scripts/stop.sh                   # stop both (the B210 is exclusive, always stop before scanning)
 scripts/switch.sh n41_pci610      # restart on another cell of config/cells.json (the viewer's cell dropdown does the same)
