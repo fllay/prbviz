@@ -28,6 +28,8 @@
   #win{width:160px}
   #scanbtn{display:none;height:36px;padding:0 16px;background:transparent;color:#00e5ff;border:1px solid #00e5ff;border-radius:6px;font:inherit;font-weight:600;cursor:pointer}
   #csilink{display:inline-flex;align-items:center;height:36px;padding:0 16px;color:#00e5ff;border:1px solid #00e5ff;border-radius:6px;font-weight:600;text-decoration:none;white-space:nowrap}
+  #agcgo{height:36px;padding:0 14px;background:#161d25;color:#e6edf3;border:1px solid #3a4756;border-radius:6px;font:inherit;font-weight:600;cursor:pointer}
+  #agcgo:disabled{opacity:.5;cursor:default}
   #stat{margin-left:auto;display:flex;align-items:center;gap:22px}
   #st_pause{display:none;padding:5px 10px;border-radius:999px;background:#3a2a0a;color:#ffb74d;font-size:12px;font-weight:700;letter-spacing:.06em;white-space:nowrap}
   #st_note{color:#9fb0bf;font-size:12px;white-space:nowrap}
@@ -137,6 +139,10 @@
       <label class="chip" title="per-symbol view only: REG bundles, CCE numbers (interleaved) and the red DMRS dots inside CORESET0; bright = bundle carries PDCCH. The DMRS dots are drawn only when the window is 10 slots or less (zoom in to see them)"><input id="ov_reg" type="checkbox" checked><i style="background:#00e5ff"></i>REG / CCE / DMRS</label>
       <label class="chip" title="show the PBCH constellation and decoded MIB panel on the right"><input id="ov_const" type="checkbox" checked><i style="background:#7bdc7b"></i>PBCH constellation</label>
       </div>
+    </div>
+    <div class="vsep" style="height:40px"></div>
+    <div class="fld" title="Upper limit of nrscope's automatic gain control (B210: 0 to 76 dB). Applying restarts nrscope (about 30 s to find the cell again). The lower limit is kept unless it would exceed the new maximum."><span class="k">AGC MAX GAIN (dB)</span>
+      <div style="display:flex;gap:6px"><input id="agcmax" type="number" min="0" max="76" step="1" aria-label="Maximum RX gain of the AGC, dB"><button id="agcgo" type="button">Apply</button></div>
     </div>
     <div style="flex:1"></div>
     <button id="pause" type="button">Pause</button>
@@ -994,7 +1000,29 @@ function draw(){
     $('hover').textContent = 'SFN ' + (Math.floor(ab2 / spf) % 1024) + '  slot ' + (((ab2 % spf) + spf) % spf) + ' (' + slotCh(((ab2 % spf) + spf) % spf) + ')' + (useSym ? '  symbol ' + hsym : '') + '  PRB ' + pr + '  ' + (qv ? qToDb(qv).toFixed(1) + ' dB' : 'no data') + '  gain ' + (ok ? (s.gain[cl] / 10).toFixed(1) : '-') + ' dB';
   } else $('hover').textContent = '';
 }
+(function(){
+  var inp = $('agcmax'), go = $('agcgo');
+  function load(){ fetch('/gain').then(function(r){ return r.json(); }).then(function(g){
+    if (g.max_rx_gain != null) { inp.value = g.max_rx_gain; inp.title = 'currently ' + g.min_rx_gain + ' to ' + g.max_rx_gain + ' dB (start ' + g.rx_gain + ' dB)'; } }).catch(function(){}); }
+  load();
+  var tries = 0, iv = setInterval(function(){ if (inp.value !== '' || ++tries > 10) { clearInterval(iv); return; } load(); }, 2000);
+  go.addEventListener('click', function(){
+    var v = parseFloat(inp.value);
+    if (!(v >= 0 && v <= 76)) { banner('AGC max gain must be between 0 and 76 dB', ''); setTimeout(function(){ banner(''); }, 3000); return; }
+    if (!confirm('Set the AGC maximum RX gain to ' + v + ' dB? nrscope restarts and needs about 30 s to find the cell again.')) return;
+    go.disabled = true;
+    banner('Restarting nrscope with AGC max gain ' + v + ' dB ...', 'about 30 s until the cell is found again');
+    fetch('/gain', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({max: v})})
+      .then(function(r){ return r.json().then(function(j){ return {ok: r.ok, j: j}; }); })
+      .then(function(x){
+        if (!x.ok) { banner('Could not set the gain: ' + (x.j.error || 'error'), ''); go.disabled = false; setTimeout(function(){ banner(''); }, 3500); return; }
+        setTimeout(function(){ banner(''); go.disabled = false; load(); }, 30000);
+      })
+      .catch(function(){ banner('Gain request failed', ''); go.disabled = false; setTimeout(function(){ banner(''); }, 3500); });
+  });
+})();
 requestAnimationFrame(draw);
 })();
+
 </script>
 </body></html>

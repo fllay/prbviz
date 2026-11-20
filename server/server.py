@@ -18,6 +18,40 @@ def load_cells():
         return []
 
 
+def read_gain():
+    """AGC limits of the running nrscope config (run/config.yaml): rx_gain (start), min_rx_gain, max_rx_gain."""
+    out = dict(rx_gain=None, min_rx_gain=None, max_rx_gain=None)
+    try:
+        with open(os.path.join(ROOT, 'run', 'config.yaml')) as f:
+            txt = f.read()
+    except OSError:
+        return out
+    for k in out:
+        m = re.search(r'^[ \t]*%s:[ \t]*([-0-9.]+)' % k, txt, re.M)
+        if m:
+            out[k] = float(m.group(1))
+    return out
+
+
+def set_gain_file(path, vals):
+    """Rewrite rx_gain / min_rx_gain / max_rx_gain in a nrscope yaml (number only, comments stay); a missing key is added below rx_gain."""
+    with open(path) as f:
+        txt = f.read()
+    for k, v in vals.items():
+        pat = re.compile(r'^([ \t]*%s:[ \t]*)[-0-9.]+' % k, re.M)
+        if pat.search(txt):
+            txt = pat.sub(lambda m: m.group(1) + ('%g' % v), txt, count=1)
+        else:
+            m2 = re.search(r'^([ \t]*)rx_gain:.*$', txt, re.M)
+            if not m2:
+                raise ValueError('no rx_gain in ' + path)
+            txt = txt[:m2.end()] + '\n%s%s: %g' % (m2.group(1), k, v) + txt[m2.end():]
+    tmp = path + '.tmp'
+    with open(tmp, 'w') as f:
+        f.write(txt)
+    os.replace(tmp, path)
+
+
 def current_cell():
     try:
         with open(os.path.join(ROOT, 'run', 'cell.id')) as f:
@@ -680,6 +714,8 @@ def make_handler(hub, meta_path):
             if p in ('/', '/index.html'):
                 with open(os.path.join(HERE, 'index.html'), 'rb') as f:
                     self._send(200, 'text/html; charset=utf-8', f.read())
+            elif p == '/gain':
+                self._jsend(200, read_gain())
             elif p == '/csi':
                 with open(os.path.join(HERE, 'csi.html'), 'rb') as f:
                     self._send(200, 'text/html; charset=utf-8', f.read())
@@ -772,7 +808,7 @@ def make_handler(hub, meta_path):
         def do_POST(self):
             # all POSTs: same-origin only; ids and numbers are validated against config files / the stored scan result, never used as paths or shell text
             path = self.path.split('?')[0]
-            if path not in ('/select', '/scan', '/scan/cancel', '/view'):
+            if path not in ('/select', '/scan', '/scan/cancel', '/view', '/gain'):
                 return self._send(404, 'text/plain', b'not found')
             org = self.headers.get('Origin')
             if org and urlparse(org).netloc != self.headers.get('Host'):
@@ -793,6 +829,30 @@ def make_handler(hub, meta_path):
                     with open(JOB, 'w') as f:
                         json.dump(st, f)
                 return self._jsend(200, dict(ok=True))
+            if path == '/gain':
+                if switching() or running:
+                    return self._jsend(409, dict(error='a scan or switch is running'))
+                try:
+                    mx = float(body.get('max'))
+                except (TypeError, ValueError):
+                    mx = -1.0
+                if not 0 <= mx <= 76:
+                    return self._jsend(400, dict(error='max gain must be 0..76 dB (B210 range)'))
+                g = read_gain()
+                mn = min(g['min_rx_gain'] if g['min_rx_gain'] is not None else 0.0, mx)
+                st = min(max(g['rx_gain'] if g['rx_gain'] is not None else mx, mn), mx)
+                vals = dict(max_rx_gain=mx, min_rx_gain=mn, rx_gain=st)
+                paths = [os.path.join(ROOT, 'run', 'config.yaml')]
+                for c in load_cells():                 # also the cell's own config, so the setting survives a restart / cell switch
+                    if c['id'] == current_cell():
+                        paths.append(os.path.realpath(os.path.join(ROOT, c['config'])))
+                try:
+                    for pth in paths:
+                        set_gain_file(pth, vals)
+                except (OSError, ValueError) as e:
+                    return self._jsend(500, dict(error=str(e)))
+                subprocess.run(['pkill', '-f', os.path.join(ROOT, 'build/nrscope/src/nrscope')])   # nrscope_loop.sh restarts it with the new limits
+                return self._jsend(202, dict(ok=True, **vals))
             if switching() or running:
                 return self._jsend(409, dict(error='a scan is running' if running else 'a switch is already running'))
             if path == '/scan':
