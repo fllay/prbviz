@@ -146,8 +146,10 @@ function draw(){
 }
 let pending = false;
 function schedule(){ if(pending) return; pending = true; requestAnimationFrame(() => { pending = false; draw(); }); }
+let es = null, hidT = null;
 function connect(){
-  const es = new EventSource('/stream?csi=1');
+  if (es) es.close();
+  es = new EventSource('/stream?csi=1');
   es.onmessage = e => {
     let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
     if(!m.csi) return;
@@ -163,4 +165,9 @@ $('freeze').onclick = () => { frozen = !frozen; $('freeze').setAttribute('aria-p
 addEventListener('resize', schedule);
 setInterval(() => { if(lastEv && performance.now() - lastEv > 4000){ $('s_lock').textContent = 'no CSI-RS for ' + ((performance.now()-lastEv)/1000).toFixed(0) + ' s'; } }, 1000);
 connect();
+// a background tab releases its stream after 15 s (browsers allow only 6 connections per host)
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) hidT = setTimeout(() => { if (es) { es.close(); es = null; } }, 15000);
+  else { clearTimeout(hidT); if (!es) connect(); }
+});
 </script></body></html>

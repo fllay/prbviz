@@ -380,6 +380,12 @@ function openStream(){
   es.onmessage = function(e){ onMsg(JSON.parse(e.data)); };
   es.onerror = function(){ $('live').className = ''; };
 }
+// background tabs release their stream after 15 s (browsers allow only 6 connections per host, extra tabs would wait for ever)
+var hidT = null;
+document.addEventListener('visibilitychange', function(){
+  if (document.hidden) { hidT = setTimeout(function(){ if (es) { es.close(); es = null; $('live').className = ''; } }, 15000); }
+  else { clearTimeout(hidT); if (!es) openStream(); }
+});
 
 
 // ---- cell selector: the list comes from config/cells.json on the server; choosing one restarts server + nrscope on that cell
