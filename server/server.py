@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PRB grid server: per-slot rows from nrscope (ZeroMQ SUB, or legacy UDP) -> reorder by absolute slot -> SSE + static page."""
-import argparse, base64, json, math, os, queue, re, socket, struct, subprocess, threading, time
+import argparse, base64, json, math, os, queue, re, socket, struct, subprocess, sys, threading, time
 from urllib.parse import urlparse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
@@ -165,9 +165,14 @@ def _equalise(y, d):
     z = z / sc
     return z, float(np.sqrt(np.mean(np.abs(z - d) ** 2))), b0
 
+from csi import CsiProc
+
 
 class Hub:
     def __init__(self, reorder, batch_ms):
+        self.csi = CsiProc(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'csi.json'))
+        self.csi_clients = 0
+        self.csi_cache = None
         self.reorder = reorder          # slots held back to absorb out-of-order rows
         self.batch_s = batch_ms / 1000.0
         self.lock = threading.Lock()
@@ -296,8 +301,13 @@ class Hub:
         sock.setsockopt(zmq.SUBSCRIBE, b'pbchc')
         sock.setsockopt(zmq.SUBSCRIBE, b'dci')
         sock.setsockopt(zmq.SUBSCRIBE, b'meas')
+        csub = False
         sock.connect(endpoint)             # nrscope BINDs; we may start before or after it and reconnect automatically
         while True:
+            want = self.csi_clients > 0     # the 'csi' topic is ~10-20 MB/s: only subscribe while a page asks for it
+            if want != csub:
+                sock.setsockopt(zmq.SUBSCRIBE if want else zmq.UNSUBSCRIBE, b'csi')
+                csub = want
             if not sock.poll(50):
                 self.dci_flush()
                 continue
@@ -316,6 +326,8 @@ class Hub:
                 self.ingest_pbchc(parts[1])
             elif parts[0] == b'meas':
                 self.ingest_meas(parts[1])
+            elif parts[0] == b'csi':
+                self.ingest_csi(parts[1])
             else:
                 self.ingest(parts[1])
 
@@ -434,6 +446,27 @@ class Hub:
         with self.cl_lock:
             for q_ in list(self.clients):
                 if getattr(q_, 'iq', False):
+                    try:
+                        q_.put_nowait(line)
+                    except queue.Full:
+                        pass
+
+    def ingest_csi(self, d):
+        """CSI-RS resource elements from nrscope -> channel estimates per 20 ms occasion (server/csi.py), pushed as {"csi": ...}."""
+        try:
+            res = self.csi.feed(d)
+        except Exception as e:                  # never let a bad frame kill the ZeroMQ thread
+            self.stat['bad'] += 1
+            sys.stderr.write('csi: %r\n' % (e,))
+            return
+        if res is None:
+            return
+        res['lock'] = int(self.csi.off if self.csi.off is not None else -1)
+        line = json.dumps(dict(csi=res), separators=(',', ':'))
+        self.csi_cache = line
+        with self.cl_lock:
+            for q_ in list(self.clients):
+                if getattr(q_, 'csi', False):
                     try:
                         q_.put_nowait(line)
                     except queue.Full:
@@ -647,6 +680,9 @@ def make_handler(hub, meta_path):
             if p in ('/', '/index.html'):
                 with open(os.path.join(HERE, 'index.html'), 'rb') as f:
                     self._send(200, 'text/html; charset=utf-8', f.read())
+            elif p == '/csi':
+                with open(os.path.join(HERE, 'csi.html'), 'rb') as f:
+                    self._send(200, 'text/html; charset=utf-8', f.read())
             elif p == '/demo':
                 with open(os.path.join(HERE, 'demo.html'), 'rb') as f:
                     self._send(200, 'text/html; charset=utf-8', f.read())
@@ -679,6 +715,9 @@ def make_handler(hub, meta_path):
                 q.sym = 'sym=1' in self.path
                 q.iq = 'iq=1' in self.path
                 q.dci = 'dci=1' in self.path
+                q.csi = 'csi=1' in self.path
+                if q.csi and hub.csi_cache:
+                    q.put_nowait(hub.csi_cache)
                 if q.dci and hub.dci_cache:
                     q.put_nowait(json.dumps(dict(dci=list(hub.dci_cache)), separators=(',', ':')))
                 if q.iq:
@@ -692,6 +731,7 @@ def make_handler(hub, meta_path):
                     hub.clients.append(q)
                     hub.sym_clients = sum(1 for x in hub.clients if getattr(x, 'sym', False))
                     hub.iq_clients = sum(1 for x in hub.clients if getattr(x, 'iq', False))
+                    hub.csi_clients = sum(1 for x in hub.clients if getattr(x, 'csi', False))
                 self.send_response(200)
                 self.send_header('Content-Type', 'text/event-stream')
                 self.send_header('Cache-Control', 'no-store')
@@ -717,6 +757,7 @@ def make_handler(hub, meta_path):
                             hub.clients.remove(q)
                         hub.sym_clients = sum(1 for x in hub.clients if getattr(x, 'sym', False))
                         hub.iq_clients = sum(1 for x in hub.clients if getattr(x, 'iq', False))
+                    hub.csi_clients = sum(1 for x in hub.clients if getattr(x, 'csi', False))
             else:
                 self._send(404, 'text/plain', b'not found')
         def _json_body(self):

@@ -8,7 +8,7 @@ and a small web server that turns the tapped data into a labelled browser view.
 
 ![prbviz block diagram: USRP B210, nrscope, ZeroMQ, server.py, browser](docs/block_diagram.svg)
 
-Topics on the PUB socket: `prb` and `sym` (power per PRB, per symbol), `pbchc` (PBCH constellation, MIB), `meas` (SNR, RSRP, CFO), `dci` (RNTI, CCEs, MCS, RIV).
+Topics on the PUB socket: `prb` and `sym` (power per PRB, per symbol), `pbchc` (PBCH constellation, MIB), `meas` (SNR, RSRP, CFO), `dci` (RNTI, CCEs, MCS, RIV), `csi` (raw CSI-RS resource elements).
 
 Tested on an Intel Core i5-13500H (13th gen, 16 threads) host with a USRP B210 against an N78 lab gNB (and a commercial n41 cell, config included).
 
@@ -25,6 +25,7 @@ Dotted lines: the B210 LO and the gNB centre. The cyan label above the CORESET0 
 2. [What the viewer shows](#what-the-viewer-shows)
    (cell scan from the GUI: [Scan for cells from the GUI](#scan-for-cells-from-the-gui-nrscan--sib1))
 3. [Layout](#layout)
+   (CSI-RS channel, impulse response, phase alignment: [CSI-RS channel estimate](#csi-rs-channel-estimate))
 4. [Data path and wire formats](#data-path-and-wire-formats)
 5. [How nrscope decodes the cell (block diagrams with C functions)](#how-nrscope-decodes-the-cell)
 6. [Timing tracker fix (why SIB1 used to stop after about 14 s)](#timing-tracker-fix)
@@ -110,7 +111,7 @@ Tick **REG/CCE/DMRS** (per-symbol view, window of about 10 slots or less) to see
 |---|---|
 | `src/` | NR-Scope + srsRAN-4G subset (lib, srsue, srsenb, srsgnb, nrscope, cmake); built with CMake |
 | `build/` | out-of-tree build (`nrscope`, `nrscan` in `build/nrscope/src/`) |
-| `server/` | `server.py` (stdlib + pyzmq), `index.html` (live view), `demo.html` (replay, outdated), `meta.json` (cell layout / overlays) |
+| `server/` | `server.py` (stdlib + pyzmq), `index.html` (live view), `csi.py` + `csi.html` (CSI-RS channel page at `/csi`), `demo.html` (replay, outdated), `meta.json` (cell layout / overlays) |
 | `config/` | nrscope configs and viewer meta files: `testbed_n78.yaml`, `meta_testbed.json`, `n41_pci610.yaml`, `meta_n41_pci610.json`, `n41_reference.yaml` |
 | `scripts/` | `build.sh`, `launch_build.sh` (background build), `start.sh`, `stop.sh`, `scan.sh`, `nrscope_loop.sh` |
 | `run/` | runtime dir: config copy, pids, logs |
@@ -121,7 +122,7 @@ Files changed or added in nrscope / srsRAN:
 
 | file | change |
 |---|---|
-| `src/nrscope/src/libs/prb_power_dump.cc`, `hdr/prb_power_dump.h` | ZeroMQ publisher, per-slot power, per-symbol power, `pbch_const_tap()` (PBCH constellation), `send_pdsch_constellation()` (SIB1, no longer used by the viewer) |
+| `src/nrscope/src/libs/prb_power_dump.cc`, `hdr/prb_power_dump.h` | ZeroMQ publisher, per-slot power, per-symbol power, `pbch_const_tap()` (PBCH constellation), `maybe_send_csi()` (topic `csi`), `send_pdsch_constellation()` (SIB1, no longer used by the viewer) |
 | `src/lib/src/phy/phch/pbch_nr.c`, `include/srsran/phy/phch/pbch_nr.h` | new hook `srsran_pbch_nr_const_cb(symbols, n, crc_ok, mib_fields)`, called after every PBCH decode with the equalised symbols and the unpacked MIB |
 | `src/nrscope/src/libs/sibs_decoder.cc` | calls `send_pdsch_constellation()` after each successful SIB1 PDSCH decode; keeps decoding when `NRSCOPE_SIB1C` is set (off by default) |
 | `src/nrscope/src/libs/nrscope_worker.cc` | SIB1 thread keeps running when `NRSCOPE_SIB1C` or `NRSCOPE_SIB1DBG` is set |
@@ -148,6 +149,7 @@ abs_slot = (sf_round*1024 + sfn) * 20 + slot_idx        (30 kHz SCS, 20 slots pe
 | `pbchc` | 6 | equalised PBCH symbols as int8 I/Q pairs (432 per frame), flags bit0 = CRC ok, bit7 = MIB trailer present, `prb_lo` = number of symbols, float32 at offset 22 unused, optional trailer after the symbols: 10 x u32 (sfn, ssb_idx, hrf, scs_common, k_ssb, dmrs_typeA_pos, coreset0_idx, ss0_idx, cell_barred, intra_freq_reselection) | PBCH constellation (`NRSCOPE_PBCHC=1`) |
 | `dci` | 7, 8 | one DCI per message, after the 22-byte header: u16 rnti, u8 rnti_type (0 C, 1 P, 2 SI, 3 RA, 4 TC), u8 format (0 0_0, 1 0_1, 2 1_0, 3 1_1), u8 coreset_id, u8 L (log2 of the aggregation level), u16 first CCE, u8 dir (0 DL, 1 UL), u8 ss_type, u16 reserved; version 8 adds 12 bytes: u8 flags (bit0 = grant fields valid), u8 mcs, u8 ndi, u8 rv, u8 HARQ pid, u8 time-domain assignment, u16 BWP size in PRBs (0 = unknown), u32 frequency-domain assignment (RIV) | exact CCEs in CORESET0 (`NRSCOPE_DCI=1`); the server relays batches to pages that open `/stream?dci=1` |
 | `meas` | 8 | measurements of every tracked SSB: 6 x float32 (rsrp_dB, epre_dB, n0_dB, snr_dB, cfo_hz, delay_us; dB relative to full scale), u32 nof_re, u32 ssb_idx; flags bit0 = PBCH CRC ok | Signal block of the PBCH panel (`NRSCOPE_PBCHC=1`) |
+| `csi` | 9 | raw cf32 resource elements of OFDM symbols 4 and 8 of the whole grid: flags = 2 symbols, `nprb` field = number of subcarriers, then u8 symbol index x 2 + 2 padding bytes, then 2 x nsc x (re, im) float32. Sent for slots with `abs_slot % 40` in the range given by `NRSCOPE_CSI="lo,hi"` (`start.sh` default `0,39`, about 20 MB/s); the server subscribes only while a page has `/stream?csi=1` open | CSI-RS channel page (`/csi`) |
 | `sib1c` | 5 | equalised SIB1 PDSCH symbols (up to 4000 per frame) | not subscribed by the server any more (`NRSCOPE_SIB1C=1`) |
 | `iq` | 3 | raw cf32 around the SSB | disabled (the server ignores it, `NRSCOPE_SSB_PRB` is no longer set) |
 
@@ -159,6 +161,42 @@ Browser side: the server reorders rows by absolute slot and pushes them over Ser
 
 Server arguments: `--zmq <endpoint> --http <host:port> --meta <meta.json>`. Environment for `start.sh`: `ZMQ_ENDPOINT`
 (default `tcp://127.0.0.1:5556`), `HTTP` (default `0.0.0.0:8080`), `META` (default `server/meta.json`).
+
+## CSI-RS channel estimate
+
+`http://<host>:8080/csi` (link "CSI-RS channel" in the top bar) shows the channel of the connected UE, measured from the CSI-RS that the gNB sends for it:
+amplitude and phase over frequency, the channel impulse response (CIR), and the phase-aligned taps. It needs a UE attached to the gNB, because the
+CSI-RS is part of that UE's configuration.
+
+**Where the configuration comes from.** The CSI-RS configuration travels in the UE's RRCReconfiguration (RRC over SRB1). nrscope cannot read it, so it is
+taken from the gNB's own MAC pcap (`/tmp/gnb_mac.pcap`, needs tshark 4.4 or newer for the `mac-nr-framed` dissector) and written into `server/csi.py`
+(override with `server/csi.json`). For the lab OCUDU gNB (n78, 30 kHz SCS, 20 MHz = 51 PRB), `scramblingID` 1 and a period of 40 slots (20 ms):
+
+| slot (mod 40) | symbols | resource |
+|---|---|---|
+| 2 and 3 | 4 and 8 | NZP-CSI-RS set 1 = TRS (`trs-Info`), 4 resources, 1 port, density 3, `row1` bit string `0010` = pilots on subcarriers 1, 5, 9 of every PRB |
+| 4 | 4 | NZP-CSI-RS resource 0, 2 ports, density 1, FD-CDM2, bit string `000010` = pilot pair on subcarriers 2 and 3 of every PRB |
+
+Command that prints them (the number in brackets after `slots40` is the choice index, not the offset; the offset is on the next line, `slots40: N`):
+
+    tshark -r /tmp/gnb_mac.pcap -Y nr-rrc -V | awk '/nzp-CSI-RS-ResourceToAddModList/{n++} n==1' | head -300 \
+      | grep -E "ResourceId|frequencyDomainAllocation|nrofPorts|firstOFDM|cdm-Type|density|slots40|trs-Info" -A1
+
+**Method** (`server/csi.py`). nrscope publishes the raw resource elements of symbols 4 and 8 (topic `csi`). The module
+1. generates the pilot sequence (TS 38.211 7.4.1.5.2, Gold sequence, `c_init = (2^10 (14 n_s + l + 1)(2 n_ID + 1) + n_ID) mod 2^31`; 2-port resource: `r(2n)`, `r(2n+1)` on the pair, TRS: `r(3n+i)`),
+2. locks onto the slot of the 2-port resource by itself (nrscope's slot counter can sit at an arbitrary offset): a wrong slot number gives an incoherent channel (adjacent-pilot coherence about 0.1), the right one a smooth channel (about 0.9); it drops the lock after 20 bad occasions,
+3. LS estimate `H = Y / X` at every pilot; for the 2-port resource the pair gives `S = h0 + h1` and `D = h0 - h1`, so `h0 = (S + D) / 2` and `h1 = (S - D) / 2`,
+4. CIR: zero-padded inverse FFT (256 bins, bin = 1 / (256 x 360 kHz) = 10.85 ns; resolution about 1 / 18.4 MHz = 54 ns = 16 m; unambiguous window +-1.39 us, TRS +-4.2 us),
+5. phase alignment: the delay of the strongest tap of the stronger port is removed (`H' = H e^{+j 2 pi f tau}`), then the phase of that tap is removed (`h'' = h' e^{-j theta}`), the same rotation for both ports so their relative phase is kept,
+6. TRS: the 4 symbols are phase-aligned and averaged; the carrier-frequency offset comes from the phase between slot 2 and slot 3 (0.5 ms apart, unambiguous +-1 kHz).
+
+**Measured on the lab cell** (static channel, UE attached): the raw phase of the strongest tap has a circular spread of 141 degrees over 10 s (clock and carrier offset between gNB and nrscope), after alignment the taps hold their phase to about 2 degrees. Residual CFO from the TRS: mean -4 Hz, std 22 Hz (nrscope already tracks the SSB). Timing about -0.2 to -0.3 us, the same from the 2-port resource and the TRS.
+
+**Things to know.**
+* **Port levels.** The 2-port CSI-RS arrives at about 37 dB per RE on port 1 and 15 to 17 dB on port 0, and the TRS (1 port) at only about 5 dB, the level of the SSB. Port 1 is therefore about 20 dB stronger than port 0 at the nrscope antenna; the page shows a warning when the ports differ by more than 15 dB. Probably nrscope's antenna is cabled to a different gNB TX connector than the one that carries the SSB; not checked. The inter-port phase is only meaningful once both ports arrive with similar level.
+* **Cost.** `NRSCOPE_CSI="0,39"` publishes about 20 MB/s on loopback, but only when a subscriber exists; the server subscribes while a page has `/csi` open (about 330 kB/s to the page, 50 updates/s). The whole window is needed because the slot offset is not known in advance; once locked, `NRSCOPE_CSI="2,4"` would be enough.
+* **Amplitude drops above about 14 MHz** from the carrier start in both resources (and the phase becomes noisy there); not investigated.
+* The 2-port CSI-RS slot is also where the UE's uplink report shows up in neighbouring slots (a loud localized burst, e.g. slot 8 around PRB 7); it is not CSI-RS.
 
 ## How nrscope decodes the cell
 
@@ -342,6 +380,7 @@ decoder result on commercial cells.
 |---|---|
 | `NRSCOPE_ZMQ=<endpoint>` | enable the ZeroMQ publisher (set by `start.sh`) |
 | `NRSCOPE_SYM=1` | publish the `sym` topic (per-symbol power) |
+| `NRSCOPE_CSI="lo,hi"` | publish the `csi` topic (raw CSI-RS REs of symbols 4 and 8) for slots with abs_slot % 40 in lo..hi; `start.sh` sets `0,39` |
 | `NRSCOPE_PBCHC=1` | publish the `pbchc` topic (PBCH constellation, set by `start.sh`) |
 | `NRSCOPE_SIB1C=1` | keep decoding SIB1 and publish `sib1c` (off by default, the viewer ignores it) |
 | `NRSCOPE_SIB1DBG` | keep the SIB1 thread running for debugging |

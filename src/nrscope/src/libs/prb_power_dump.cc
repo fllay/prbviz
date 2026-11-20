@@ -334,6 +334,66 @@ static void maybe_send_iq(const cf_t* sf_symbols, int nof_re, int lo_re, int hi_
   z.publish("iq", buf.data(), buf.size());
 }
 
+// Raw complex resource elements of the CSI-RS symbols (topic "csi", ZeroMQ only). NRSCOPE_CSI="lo,hi" sends symbols 4 and 8 of every slot whose
+// abs_slot % 40 lies in [lo, hi] (the gNB's CSI-RS/TRS slots are 2, 3, 4 of every 40). Header: version 9, flags = nsym, "prb_lo" field = 0,
+// "nprb" field = number of subcarriers of the whole grid; payload = nsym symbol indices (u8) padded to 4 bytes, then nsym x nsc complex float32.
+static bool csi_slots(uint32_t& lo, uint32_t& hi)
+{
+  static uint32_t l = 1, h = 0;
+  static bool     init = false;
+  if (!init) {
+    init = true;
+    const char* e = std::getenv("NRSCOPE_CSI");
+    unsigned    a = 0, b = 0;
+    if (e && sscanf(e, "%u,%u", &a, &b) == 2 && b >= a && b < 40) {
+      l = a;
+      h = b;
+    }
+  }
+  lo = l;
+  hi = h;
+  return l <= h;
+}
+
+static void maybe_send_csi(const cf_t* sf_symbols, int nof_re, uint64_t abs_slot, uint32_t sfn, uint32_t slot_idx)
+{
+  ZmqPub&  z = zpub();
+  uint32_t lo, hi;
+  if (!z.sock || !csi_slots(lo, hi)) {
+    return;
+  }
+  const uint32_t m = (uint32_t)(abs_slot % 40);
+  if (m < lo || m > hi) {
+    return;
+  }
+  const uint8_t      syms[2] = {4, 8};
+  const size_t       nsc     = (size_t)nof_re;
+  std::vector<uint8_t> buf(22 + 4 + 2 * nsc * 8);
+  uint16_t magic = 0x5052, sfn16 = (uint16_t)sfn, zero16 = 0, np = (uint16_t)nsc;
+  int16_t  gain = (int16_t)std::lround(g_rx_gain.load() * 10.0f);
+  memset(buf.data(), 0, 26);
+  memcpy(buf.data() + 0, &magic, 2);
+  buf[2] = 9;
+  buf[3] = 2;
+  memcpy(buf.data() + 4, &abs_slot, 8);
+  memcpy(buf.data() + 12, &sfn16, 2);
+  buf[14] = (uint8_t)slot_idx;
+  memcpy(buf.data() + 16, &gain, 2);
+  memcpy(buf.data() + 18, &zero16, 2);
+  memcpy(buf.data() + 20, &np, 2);
+  buf[22] = syms[0];
+  buf[23] = syms[1];
+  float* out = (float*)(buf.data() + 26);
+  for (int i = 0; i < 2; i++) {
+    const cf_t* row = sf_symbols + (size_t)syms[i] * nof_re;
+    for (size_t k = 0; k < nsc; k++) {
+      *out++ = __real__ row[k];
+      *out++ = __imag__ row[k];
+    }
+  }
+  z.publish("csi", buf.data(), buf.size());
+}
+
 void send_pdsch_constellation(const cf_t* d, uint32_t n, uint32_t mod_bits, bool crc, float evm, uint64_t abs_slot, uint32_t sfn,
                               uint32_t slot_idx)
 {
@@ -530,6 +590,7 @@ void write_slot(const cf_t* sf_symbols, uint32_t nof_prb, uint32_t slot_idx, uin
   }
 
   send_datagram(abs_slot, sfn, slot_idx, prb_lo, db);
+  maybe_send_csi(sf_symbols, nof_re, abs_slot, sfn, slot_idx);
   if (sym_on) {
     send_symbols(abs_slot, sfn, slot_idx, prb_lo, nprb, sdb);
     maybe_send_iq(sf_symbols, nof_re, lo_re, hi_re, prb_lo, nprb, abs_slot, sfn, slot_idx, sdb);

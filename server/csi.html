@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>prbviz · CSI-RS channel</title>
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#0f1419;color:#e6edf3;font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 22px;padding:10px 20px;background:#121920;border-bottom:1px solid #26313d}
+  header h1{margin:0;font-size:15px;font-weight:700}
+  header a{color:#00e5ff;text-decoration:none;font-weight:600}
+  .kv{display:flex;flex-direction:column;gap:1px}
+  .k{color:#9fb0bf;font-size:11px;letter-spacing:.06em}
+  .v{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+  #sp{flex:1}
+  button{height:34px;padding:0 14px;background:#161d25;color:#e6edf3;border:1px solid #3a4756;border-radius:6px;font:inherit;font-weight:600;cursor:pointer}
+  button[aria-pressed=true]{background:#0c3340;color:#00e5ff;border-color:#00e5ff}
+  #note{padding:10px 20px;color:#ffb74d;background:#241c0a;border-bottom:1px solid #3a2a0a;display:none}
+  #wait{padding:30px 20px;color:#9fb0bf;text-align:center}
+  main{display:grid;grid-template-columns:repeat(auto-fit,minmax(460px,1fr));gap:12px;padding:12px 16px}
+  .p{background:#161d25;border:1px solid #26313d;border-radius:8px;padding:10px 12px}
+  .p h2{margin:0 0 2px;font-size:13px;font-weight:700}
+  .p small{display:block;color:#9fb0bf;margin-bottom:6px}
+  canvas{width:100%;height:270px;display:block}
+  .lg{display:flex;flex-wrap:wrap;gap:6px 16px;color:#b4c2cf;font-size:12px;margin-top:4px}
+  .lg span{display:inline-flex;align-items:center;gap:6px}
+  .lg i{width:14px;height:3px;border-radius:2px;display:inline-block}
+  footer{padding:6px 20px 16px;color:#9fb0bf;font-size:12px}
+</style></head>
+<body>
+<header>
+  <h1>CSI-RS channel</h1><a href="/">← resource grid</a>
+  <div class="kv"><span class="k">LOCK</span><span class="v" id="s_lock">searching…</span></div>
+  <div class="kv"><span class="k">COHERENCE</span><span class="v" id="s_coh">–</span></div>
+  <div class="kv"><span class="k">REFERENCE PORT</span><span class="v" id="s_ref">–</span></div>
+  <div class="kv"><span class="k">TIMING (PORT 0 / 1)</span><span class="v" id="s_tau">–</span></div>
+  <div class="kv"><span class="k">TRS TIMING</span><span class="v" id="s_ttau">–</span></div>
+  <div class="kv"><span class="k">TRS CFO</span><span class="v" id="s_cfo">–</span></div>
+  <div class="kv"><span class="k">PEAK TAP (PORT 0 / 1)</span><span class="v" id="s_pk">–</span></div>
+  <div class="kv"><span class="k">PHASE SPREAD, 10 s (RAW → ALIGNED)</span><span class="v" id="s_spread">–</span></div>
+  <div class="kv"><span class="k">UPDATES</span><span class="v" id="s_rate">–</span></div>
+  <span id="sp"></span>
+  <button id="freeze" type="button" aria-pressed="false">Freeze</button>
+</header>
+<div id="note"></div>
+<div id="wait">Waiting for the 2-port CSI-RS. It is sent only while a UE is attached; the module locks onto its slot by itself.</div>
+<main id="main" style="display:none">
+  <section class="p"><h2>Channel amplitude |H(f)|</h2><small>per port from the 2-port CSI-RS (one pilot pair per PRB), and the TRS (a pilot every 4th subcarrier)</small><canvas id="c_amp"></canvas><div class="lg" id="lg_amp"></div></section>
+  <section class="p"><h2>Phase of H(f), timing slope removed</h2><small>a flat line is a single path; a ripple is a second path</small><canvas id="c_ph"></canvas><div class="lg" id="lg_ph"></div></section>
+  <section class="p"><h2>Channel impulse response |h(τ)|</h2><small>zero-padded inverse FFT; resolution about 54 ns (16 m), bin spacing 10.85 ns</small><canvas id="c_cir"></canvas><div class="lg" id="lg_cir"></div></section>
+  <section class="p"><h2>Phase alignment over time</h2><small>the raw phase of the strongest tap wanders (unlocked clocks, carrier offset); referenced to it, the other taps hold their phase</small><canvas id="c_t"></canvas><div class="lg" id="lg_t"></div></section>
+  <section class="p"><h2>Aligned taps around the strongest tap</h2><small>after timing removal and phase referencing (tap 0 of the reference port has phase 0)</small><canvas id="c_tap"></canvas><div class="lg" id="lg_tap"></div></section>
+  <section class="p"><h2>Aligned taps: phase</h2><small>phase of each tap, degrees, only where the tap is within 25 dB of the strongest</small><canvas id="c_tph"></canvas><div class="lg" id="lg_tph"></div></section>
+</main>
+<footer>Channel from the UE-specific CSI-RS configuration of the OCUDU gNB (see README). Port 0 / 1 are the two antenna ports of the 2-port resource.</footer>
+<script>
+"use strict";
+const COL = {p0:'#4fc3f7', p1:'#ffb74d', trs:'#7bdc7b', raw:'#ff8a8a'};
+const $ = id => document.getElementById(id);
+let last = null, frozen = false, hist = [], nEv = 0, tRate = performance.now(), rate = 0, lastEv = 0;
+
+function ticks(lo, hi, n){
+  const span = hi - lo || 1, raw = span / n, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1,2,5,10].map(f => f*mag).find(s => s >= raw) || mag*10;
+  const out = []; for(let v = Math.ceil(lo/step)*step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(6));
+  return out;
+}
+function plot(cv, o){
+  const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if(cv.width !== Math.round(w*dpr) || cv.height !== Math.round(h*dpr)){ cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr); }
+  const g = cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h);
+  const L = 48, R = 10, T = 8, B = 30, pw = w-L-R, ph = h-T-B;
+  let xlo = o.xlo, xhi = o.xhi, ylo = o.ylo, yhi = o.yhi;
+  if(ylo == null || yhi == null){
+    let mn = Infinity, mx = -Infinity;
+    for(const s of o.series) for(const v of s.y) if(isFinite(v)){ if(v < mn) mn = v; if(v > mx) mx = v; }
+    if(!isFinite(mn)){ mn = 0; mx = 1; }
+    const pad = Math.max(2, (mx-mn)*0.08); ylo = ylo ?? mn-pad; yhi = yhi ?? mx+pad;
+  }
+  const X = v => L + (v-xlo)/(xhi-xlo)*pw, Y = v => T + (1-(v-ylo)/(yhi-ylo))*ph;
+  g.font = '11px system-ui'; g.fillStyle = '#9fb0bf'; g.strokeStyle = '#26313d'; g.lineWidth = 1;
+  for(const v of ticks(ylo, yhi, 5)){ const y = Math.round(Y(v))+.5; g.beginPath(); g.moveTo(L,y); g.lineTo(L+pw,y); g.stroke(); g.textAlign = 'right'; g.fillText(String(v), L-5, y+4); }
+  for(const v of ticks(xlo, xhi, 6)){ const x = Math.round(X(v))+.5; g.beginPath(); g.moveTo(x,T); g.lineTo(x,T+ph); g.stroke(); g.textAlign = 'center'; g.fillText(String(v), x, h-B+14); }
+  g.textAlign = 'center'; g.fillText(o.xlabel||'', L+pw/2, h-4);
+  g.save(); g.translate(11, T+ph/2); g.rotate(-Math.PI/2); g.fillText(o.ylabel||'', 0, 0); g.restore();
+  g.save(); g.beginPath(); g.rect(L,T,pw,ph); g.clip();
+  for(const m of (o.marks||[])){ g.strokeStyle = m.color; g.setLineDash([4,4]); const x = Math.round(X(m.x))+.5; g.beginPath(); g.moveTo(x,T); g.lineTo(x,T+ph); g.stroke(); g.setLineDash([]); }
+  for(const s of o.series){
+    g.strokeStyle = s.color; g.fillStyle = s.color; g.lineWidth = 1.6;
+    if(s.dots){ for(let i = 0; i < s.y.length; i++){ if(!isFinite(s.y[i])) continue; g.beginPath(); g.arc(X(s.x[i]), Y(s.y[i]), 2, 0, 6.3); g.fill(); } continue; }
+    if(s.stems){ g.lineWidth = 3; for(let i = 0; i < s.y.length; i++){ if(!isFinite(s.y[i])) continue; const x = X(s.x[i]) + (s.dx||0); g.beginPath(); g.moveTo(x, Y(ylo)); g.lineTo(x, Y(s.y[i])); g.stroke(); } continue; }
+    g.beginPath(); let pen = false;
+    for(let i = 0; i < s.y.length; i++){ if(!isFinite(s.y[i])){ pen = false; continue; } const x = X(s.x[i]), y = Y(s.y[i]); if(pen) g.lineTo(x,y); else{ g.moveTo(x,y); pen = true; } }
+    g.stroke();
+  }
+  g.restore();
+}
+function legend(id, items){ $(id).innerHTML = items.map(([c,t]) => '<span><i style="background:'+c+'"></i>'+t+'</span>').join(''); }
+const f1 = v => (v == null || !isFinite(v)) ? '–' : v.toFixed(1);
+
+function draw(){
+  const m = last; if(!m) return;
+  const r = m.r0, a = m.al, t = m.trs, ref = a.ref, ln = ['port 0', 'port 1'];
+  const nm = i => ln[i] + (i === ref ? ' (reference)' : '');
+  const fx = (n, df) => Array.from({length:n}, (_, i) => +(i*df/1000).toFixed(3));
+  const xs = fx(r.n, r.df), xt = t ? fx(t.n, t.df) : [];
+  const amp = [{x:xs, y:r.a[0], color:COL.p0}, {x:xs, y:r.a[1], color:COL.p1}]; if(t) amp.push({x:xt, y:t.a, color:COL.trs});
+  plot($('c_amp'), {series:amp, xlo:0, xhi:r.n*r.df/1000, xlabel:'frequency from the start of the carrier (MHz)', ylabel:'dB'});
+  const ph = [{x:xs, y:r.p[0], color:COL.p0}, {x:xs, y:r.p[1], color:COL.p1}]; if(t) ph.push({x:xt, y:t.p, color:COL.trs});
+  plot($('c_ph'), {series:ph, xlo:0, xhi:r.n*r.df/1000, xlabel:'frequency from the start of the carrier (MHz)', ylabel:'degrees'});
+  const nb = r.cir[0].length, tx = Array.from({length:nb}, (_, j) => +((j-nb/2)*r.bin).toFixed(1));
+  const cir = [{x:tx, y:r.cir[0], color:COL.p0}, {x:tx, y:r.cir[1], color:COL.p1}]; if(t) cir.push({x:tx, y:t.cir, color:COL.trs});
+  let top = -Infinity; for(const s of cir) for(const v of s.y) if(v > top) top = v;
+  plot($('c_cir'), {series:cir, xlo:tx[0], xhi:tx[nb-1], ylo:Math.floor((top-70)/10)*10, yhi:Math.ceil((top+3)/10)*10, xlabel:'delay (ns)', ylabel:'dB',
+                    marks:[{x:r.tau[0], color:COL.p0}, {x:r.tau[1], color:COL.p1}].concat(t ? [{x:t.tau, color:COL.trs}] : [])});
+  const now = hist.length ? hist[hist.length-1].t : 0, H = hist.filter(h => now - h.t <= 10);
+  const xh = H.map(h => h.t - now);
+  plot($('c_t'), {series:[{x:xh, y:H.map(h => h.theta), color:COL.raw, dots:true}, {x:xh, y:H.map(h => h.tap), color:ref ? COL.p1 : COL.p0, dots:true}],
+                  xlo:-10, xhi:0, ylo:-180, yhi:180, xlabel:'time (s)', ylabel:'degrees'});
+  const k0 = a.t0, kx = a.m[0].map((_, j) => k0 + j);
+  const mx = Math.max(...a.m[ref]);
+  plot($('c_tap'), {series:[{x:kx, y:a.m[0], color:COL.p0, stems:true, dx:-2}, {x:kx, y:a.m[1], color:COL.p1, stems:true, dx:2}],
+                    xlo:k0-.5, xhi:k0+a.m[0].length-.5, ylo:Math.floor((mx-60)/10)*10, yhi:Math.ceil((mx+3)/10)*10, xlabel:'tap (bin of ' + r.bin.toFixed(2) + ' ns, 0 = strongest tap)', ylabel:'dB'});
+  const mask = (j, p) => a.m[p][j] > mx - 25 ? a.ph[p][j] : NaN;
+  plot($('c_tph'), {series:[{x:kx, y:kx.map((_, j) => mask(j,0)), color:COL.p0, dots:true}, {x:kx, y:kx.map((_, j) => mask(j,1)), color:COL.p1, dots:true}],
+                    xlo:k0-.5, xhi:k0+a.m[0].length-.5, ylo:-180, yhi:180, xlabel:'tap', ylabel:'degrees'});
+  legend('lg_amp', [[COL.p0,'port 0'],[COL.p1,'port 1'],[COL.trs,'TRS']]);
+  legend('lg_ph', [[COL.p0,'port 0'],[COL.p1,'port 1'],[COL.trs,'TRS']]);
+  legend('lg_cir', [[COL.p0,'port 0'],[COL.p1,'port 1'],[COL.trs,'TRS'],['#9fb0bf','dashed: strongest tap']]);
+  legend('lg_t', [[COL.raw,'raw phase of the strongest tap'],[ref ? COL.p1 : COL.p0,'tap +4 (about 43 ns) of the reference port, referenced to the strongest tap']]);
+  legend('lg_tap', [[COL.p0,'port 0'],[COL.p1,'port 1']]);
+  legend('lg_tph', [[COL.p0,'port 0'],[COL.p1,'port 1']]);
+  $('s_lock').textContent = 'slot ' + ((m.lock + 4) % 40) + ' mod 40 ok';
+  $('s_coh').textContent = m.coh.toFixed(2);
+  $('s_ref').textContent = 'port ' + ref;
+  $('s_tau').textContent = f1(r.tau[0]) + ' / ' + f1(r.tau[1]) + ' ns';
+  $('s_ttau').textContent = t ? f1(t.tau) + ' ns' : '–';
+  $('s_cfo').textContent = t && t.cfo != null ? t.cfo.toFixed(0) + ' Hz' : '–';
+  $('s_pk').textContent = f1(r.pk[0]) + ' / ' + f1(r.pk[1]) + ' dB';
+  const cstd = v => { if(v.length < 5) return NaN; let c = 0, s = 0; for(const x of v){ c += Math.cos(x*Math.PI/180); s += Math.sin(x*Math.PI/180); } const R = Math.hypot(c, s)/v.length; return Math.sqrt(-2*Math.log(Math.min(1, Math.max(R, 1e-9))))*180/Math.PI; };
+  $('s_spread').textContent = f1(cstd(H.map(h => h.theta))) + '° → ' + f1(cstd(H.map(h => h.tap))) + '°';
+  $('s_rate').textContent = rate.toFixed(0) + ' /s';
+  const d = Math.abs(r.pk[0] - r.pk[1]);
+  const note = $('note');
+  if(d > 15){ note.style.display = 'block'; note.textContent = 'Port ' + (r.pk[0] > r.pk[1] ? 1 : 0) + ' arrives ' + d.toFixed(0) + ' dB weaker than port ' + (r.pk[0] > r.pk[1] ? 0 : 1) + ': it is close to the noise floor, so its phase is noisy. Check which gNB antenna connector nrscope is cabled to.'; }
+  else note.style.display = 'none';
+}
+let pending = false;
+function schedule(){ if(pending) return; pending = true; requestAnimationFrame(() => { pending = false; draw(); }); }
+function connect(){
+  const es = new EventSource('/stream?csi=1');
+  es.onmessage = e => {
+    let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
+    if(!m.csi) return;
+    lastEv = performance.now();
+    $('wait').style.display = 'none'; $('main').style.display = '';
+    nEv++; const now = performance.now(); if(now - tRate > 1000){ rate = nEv*1000/(now-tRate); nEv = 0; tRate = now; }
+    hist.push({t:m.csi.t, theta:m.csi.al.theta, tap:m.csi.al.ph[m.csi.al.ref][12]}); if(hist.length > 700) hist.shift();
+    if(!frozen){ last = m.csi; schedule(); }
+  };
+  es.onerror = () => { $('s_lock').textContent = 'stream lost, retrying…'; };
+}
+$('freeze').onclick = () => { frozen = !frozen; $('freeze').setAttribute('aria-pressed', frozen); if(!frozen) schedule(); };
+addEventListener('resize', schedule);
+setInterval(() => { if(lastEv && performance.now() - lastEv > 4000){ $('s_lock').textContent = 'no CSI-RS for ' + ((performance.now()-lastEv)/1000).toFixed(0) + ' s'; } }, 1000);
+connect();
+</script></body></html>

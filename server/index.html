@@ -27,6 +27,7 @@
   #cellsel{min-width:320px}
   #win{width:160px}
   #scanbtn{display:none;height:36px;padding:0 16px;background:transparent;color:#00e5ff;border:1px solid #00e5ff;border-radius:6px;font:inherit;font-weight:600;cursor:pointer}
+  #csilink{display:inline-flex;align-items:center;height:36px;padding:0 16px;color:#00e5ff;border:1px solid #00e5ff;border-radius:6px;font-weight:600;text-decoration:none;white-space:nowrap}
   #stat{margin-left:auto;display:flex;align-items:center;gap:22px}
   #st_pause{display:none;padding:5px 10px;border-radius:999px;background:#3a2a0a;color:#ffb74d;font-size:12px;font-weight:700;letter-spacing:.06em;white-space:nowrap}
   #st_note{color:#9fb0bf;font-size:12px;white-space:nowrap}
@@ -95,7 +96,7 @@
     <div class="vsep"></div>
     <div style="display:flex;align-items:flex-end;gap:12px">
       <label class="fld" id="cellselL" style="display:none" title="Switching restarts nrscope and the SDR for everybody watching this server"><span class="k">CELL</span><select id="cellsel"></select></label>
-      <button id="scanbtn" title="Search a band for cells, read their PLMN, and choose one to view (stops the live view while scanning)">Scan for cells…</button>
+      <button id="scanbtn" title="Search a band for cells, read their PLMN, and choose one to view (stops the live view while scanning)">Scan for cells…</button> <a id="csilink" href="/csi" target="_blank" rel="noopener" title="CSI-RS channel estimate, impulse response and phase alignment">CSI-RS channel</a>
     </div>
     <div id="stat">
       <div class="kv"><span class="k">SFN / SLOT</span><span class="v" id="st_sfn">–</span></div>
